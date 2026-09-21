@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Span of two vectors</title>
+<style>
+  :root{--ink:#14213d;--muted:#5b6478;--paper:#fbfbf8;--panel:#fff;--rule:#d9dce3;
+        --a1:#2f5d8a;--a2:#c8553d;--you:#f2a20c;--best:#0b8a7a;--bad:#c8553d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:17px/1.45 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1280px;margin:0 auto;padding:20px 24px 28px}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;margin-bottom:14px}
+  h1{font-size:30px;line-height:1.1;margin:0;font-weight:650;letter-spacing:-.01em}
+  .seg{display:flex} .seg button{border-radius:0;margin-left:-1px;min-width:64px;font-weight:650}
+  .seg button:first-child{border-radius:5px 0 0 5px;margin-left:0} .seg button:last-child{border-radius:0 5px 5px 0}
+  .grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  figure{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px}
+  .cw{position:relative;width:100%;aspect-ratio:1/1;max-height:calc(100vh - 130px);margin:0 auto}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+  .box{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px 18px;margin-bottom:14px}
+  button{font:inherit;font-size:16px;padding:7px 14px;border-radius:5px;border:1px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+  button:hover{background:#eef0f5} button.on{background:var(--ink);color:#fff}
+  button:focus-visible,input:focus-visible{outline:3px solid var(--you);outline-offset:2px}
+  .ask{font-size:22px;line-height:1.35;margin:0 0 4px;font-weight:600}
+  .hint{font-size:16px;color:var(--muted)}
+  .slider{display:grid;grid-template-columns:150px 1fr 64px;align-items:center;gap:12px;margin:4px 0}
+  .slider label{font-size:17px} .slider label i{font-family:"Cambria Math",Cambria,serif;font-size:24px}
+  .slider output{font-size:21px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;height:28px;accent-color:var(--ink)}
+  #s1{accent-color:var(--a1)} #s2{accent-color:var(--a2)} #s3{accent-color:var(--you)}
+  .eq{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:26px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow-x:auto;margin-bottom:6px}
+  .c1{color:var(--a1)} .c2{color:var(--a2)} .c3{color:#b97900}
+  .answer{font-size:22px;font-weight:650;margin-top:6px;line-height:1.35}
+  .answer small{display:block;font-size:16px;font-weight:400;color:var(--muted);margin-top:4px}
+  .good{color:var(--best)} .badc{color:var(--bad)}
+  .row{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:10px;align-items:center}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>The span of two vectors</h1>
+    <div class="seg" id="tabs"><button data-v="2" class="on">2D</button><button data-v="3">3D</button></div>
+  </header>
+
+  <div class="grid">
+    <figure><div class="cw"><canvas id="cv"></canvas></div></figure>
+
+    <div>
+      <div class="box">
+        <div class="ask" id="ask"></div>
+        <div class="hint" id="hint"></div>
+      </div>
+      <div class="box">
+        <div class="eq" id="eq"></div>
+        <div class="slider"><label for="s1" class="c1"><i>β</i>₁</label><input id="s1" type="range" min="-4" max="4" step="0.01" value="1"><output id="o1"></output></div>
+        <div class="slider"><label for="s2" class="c2"><i>β</i>₂</label><input id="s2" type="range" min="-4" max="4" step="0.01" value="0.8"><output id="o2"></output></div>
+        <div class="slider hidden" id="rowS3"><label for="s3" class="c3">off the plane</label><input id="s3" type="range" min="-2.5" max="2.5" step="0.01" value="0"><output id="o3"></output></div>
+        <div class="row">
+          <button id="btnSample">Try 400 random values</button>
+          <button id="btnOn" class="hidden">Put b on the plane</button>
+          <button id="btnNew" class="hidden">New vectors</button>
+          <button id="btnReset">Reset</button>
+        </div>
+      </div>
+      <div class="box">
+        <div class="hint" id="reachLab"></div>
+        <div class="answer" id="reach"></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C={ink:css('--ink'),muted:css('--muted'),a1:css('--a1'),a2:css('--a2'),you:css('--you'),best:css('--best'),bad:css('--bad')};
+  const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2), sgn=v=>(v<0?'− ':'+ ')+f2(Math.abs(v));
+  let dim=2, drag=null, samples=[];
+
+  // ---------- 2D state
+  const R=3; let a1=[1.4,0.4], a2=[0.3,1.2], bNow=[0,0];
+  const det=()=>a1[0]*a2[1]-a1[1]*a2[0];
+  const isLine=()=>Math.abs(det())/(Math.hypot(...a1)*Math.hypot(...a2)+1e-12)<0.035;
+
+  // ---------- 3D state
+  const V0=[[1.7,0.3,0.4],[0.3,1.5,0.8]]; let u1=V0[0].slice(), u2=V0[1].slice(), az=-0.9, el=0.38, last=null;
+  const dot3=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2], cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+  const add=(a,b,s=1)=>[a[0]+s*b[0],a[1]+s*b[1],a[2]+s*b[2]], mul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s], unit=a=>mul(a,1/(Math.hypot(...a)||1));
+
+  // ---------- drawing helpers (work on projected 2D points)
+  function arrowP(g,a,b,col,wd,dash){ const ang=Math.atan2(b[1]-a[1],b[0]-a[0]),L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<2) return;
+    const hl=Math.min(14,L*.6); g.strokeStyle=col; g.fillStyle=col; g.lineWidth=wd; g.setLineDash(dash||[]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0]-hl*.8*Math.cos(ang),b[1]-hl*.8*Math.sin(ang)); g.stroke(); g.setLineDash([]);
+    g.beginPath(); g.moveTo(b[0],b[1]); g.lineTo(b[0]-hl*Math.cos(ang-.4),b[1]-hl*Math.sin(ang-.4)); g.lineTo(b[0]-hl*Math.cos(ang+.4),b[1]-hl*Math.sin(ang+.4)); g.closePath(); g.fill(); }
+  function labelP(g,p,t,col){ g.font='italic 22px "Cambria Math",Cambria,serif'; g.textAlign='left'; g.textBaseline='bottom'; const m=g.measureText(t).width;
+    g.fillStyle='rgba(255,255,255,.8)'; g.fillRect(p[0]+7,p[1]-30,m+6,24); g.fillStyle=col; g.fillText(t,p[0]+10,p[1]-7); }
+  function dotP(g,p,r,fill){ g.fillStyle=fill; g.strokeStyle=C.ink; g.lineWidth=2; g.beginPath(); g.arc(p[0],p[1],r,0,7); g.fill(); g.stroke(); }
+  function lineP(g,a,b,col,wd,dash){ g.strokeStyle=col; g.lineWidth=wd; g.setLineDash(dash||[]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); g.setLineDash([]); }
+
+  function draw(){
+    const cv=$('cv'), rc=cv.getBoundingClientRect(), dpr=window.devicePixelRatio||1;
+    cv.width=Math.round(rc.width*dpr); cv.height=Math.round(rc.height*dpr);
+    const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); const w=rc.width,h=rc.height; g.clearRect(0,0,w,h);
+    $('rowS3').classList.toggle('hidden',dim===2); $('btnOn').classList.toggle('hidden',dim===2); $('btnNew').classList.toggle('hidden',dim===2);
+    $('o1').textContent=f2(+$('s1').value); $('o2').textContent=f2(+$('s2').value); $('o3').textContent=f2(+$('s3').value);
+    dim===2?draw2(g,w,h):draw3(g,w,h);
+  }
+
+  // ======================= 2D =======================
+  function draw2(g,w,h){
+    const sc=Math.min(w,h)/(2*R), P=v=>[w/2+v[0]*sc,h/2-v[1]*sc], line=isLine(), b1=+$('s1').value, b2=+$('s2').value;
+    if(line){ const u=unit([a1[0],a1[1],0]); lineP(g,P([-9*u[0],-9*u[1]]),P([9*u[0],9*u[1]]),'rgba(47,93,138,.25)',18); } else { g.fillStyle='rgba(47,93,138,.13)'; g.fillRect(0,0,w,h); }
+    for(let k=-R;k<=R;k++){ const col=k?'rgba(20,33,61,.07)':C.ink; lineP(g,P([k,-R]),P([k,R]),col,1); lineP(g,P([-R,k]),P([R,k]),col,1); }
+    g.fillStyle='rgba(20,33,61,.5)'; for(const s of samples){ const p=P([s[0]*a1[0]+s[1]*a2[0],s[0]*a1[1]+s[1]*a2[1]]); g.beginPath(); g.arc(p[0],p[1],2.6,0,7); g.fill(); }
+    const m1=[b1*a1[0],b1*a1[1]], m2=[b2*a2[0],b2*a2[1]], b=[m1[0]+m2[0],m1[1]+m2[1]], O=P([0,0]);
+    arrowP(g,O,P(m1),C.a1,2.5,[6,5]); arrowP(g,P(m1),P(b),C.a2,2.5,[6,5]); arrowP(g,O,P(m2),C.a2,2.5,[6,5]); arrowP(g,P(m2),P(b),C.a1,2.5,[6,5]);
+    arrowP(g,O,P(a1),C.a1,4.5); labelP(g,P(a1),'a₁',C.a1); arrowP(g,O,P(a2),C.a2,4.5); labelP(g,P(a2),'a₂',C.a2);
+    bNow=b; dotP(g,P(b),9,C.you); labelP(g,P(b),'b',C.ink);
+    $('ask').textContent='Two vectors in the plane. Where can b = β₁a₁ + β₂a₂ go?';
+    $('hint').textContent='Drag a₁, a₂ or b, or move the sliders. Then make a₂ parallel to a₁.';
+    $('eq').innerHTML=`<i>b</i> = <span class="c1">${f2(b1)} <i>a</i>₁</span> <span class="c2">${sgn(b2)} <i>a</i>₂</span>`;
+    $('reachLab').textContent='Everything I can reach (the span):';
+    $('reach').innerHTML = line ? 'Only a line.<small>a₂ is a multiple of a₁, so it adds nothing new. b cannot leave the line.</small>'
+                                : 'The whole plane.<small>Every point can be written as β₁a₁ + β₂a₂, in exactly one way.</small>';
+  }
+
+  // ======================= 3D =======================
+  function draw3(g,w,h){
+    const L=3.4, ca=Math.cos(az),sa=Math.sin(az),ce=Math.cos(el),se=Math.sin(el), s=Math.min(w,h)/(2*L*1.42), cx=w/2, cy=h/2;
+    const P=v=>{ const xr=v[0]*ca-v[1]*sa, yr=v[0]*sa+v[1]*ca; return [cx+s*xr, cy-s*(yr*se+v[2]*ce)]; };
+    const cam=[-sa*ce,-ca*ce,se];                                   // direction towards the viewer
+    const b1=+$('s1').value, b2=+$('s2').value; let t=+$('s3').value; if(Math.abs(t)<0.04) t=0;
+    const n=unit(cross(u1,u2)), p=add(mul(u1,b1),mul(u2,b2)), b=add(p,n,t), O=[0,0,0];
+    const bFront = t*dot3(n,cam)>=0;                               // is b on the viewer's side of the plane?
+
+    // box and axes
+    const E=[[-L,-L,-L],[L,-L,-L],[L,L,-L],[-L,L,-L],[-L,-L,L],[L,-L,L],[L,L,L],[-L,L,L]];
+    [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(e=>lineP(g,P(E[e[0]]),P(E[e[1]]),'#e3e5ea',1));
+    [[[L,0,0],'x₁'],[[0,L,0],'x₂'],[[0,0,L],'x₃']].forEach(([v,t2])=>{ lineP(g,P(mul(v,-1)),P(v),C.ink,1.2); const q=P(mul(v,1.08)); g.font='italic 17px "Cambria Math",Cambria,serif'; g.fillStyle=C.muted; g.textAlign='center'; g.textBaseline='middle'; g.fillText(t2,q[0],q[1]); });
+
+    const offStuff=()=>{ if(t===0) return; const col=C.bad;
+      lineP(g,P(p),P(b),col,3,[7,5]);
+      const q=P(p); g.fillStyle='#fff'; g.strokeStyle=col; g.lineWidth=2.5; g.beginPath(); g.arc(q[0],q[1],6,0,7); g.fill(); g.stroke(); };
+    const bDot=()=>{ dotP(g,P(b),9,t===0?C.you:C.bad); labelP(g,P(b),'b',C.ink); };
+
+    if(!bFront){ offStuff(); bDot(); }                              // behind the plane: draw first, the plane tints it
+
+    // the plane: patch spanned by a1, a2 (coefficients in [-2.6, 2.6]) with a grid of integer coefficients
+    const K=2.1, c4=[[-K,-K],[K,-K],[K,K],[-K,K]].map(c=>P(add(mul(u1,c[0]),mul(u2,c[1]))));
+    g.fillStyle='rgba(47,93,138,.20)'; g.strokeStyle='rgba(47,93,138,.55)'; g.lineWidth=1.5; g.beginPath(); c4.forEach((q,i)=>i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1])); g.closePath(); g.fill(); g.stroke();
+    for(let k=-2;k<=2;k++){ lineP(g,P(add(mul(u1,k),mul(u2,-K))),P(add(mul(u1,k),mul(u2,K))),'rgba(200,85,61,.30)',1); lineP(g,P(add(mul(u1,-K),mul(u2,k))),P(add(mul(u1,K),mul(u2,k))),'rgba(47,93,138,.30)',1); }
+    g.fillStyle='rgba(20,33,61,.5)'; for(const sm of samples){ const q=P(add(mul(u1,sm[0]*0.68),mul(u2,sm[1]*0.68))); g.beginPath(); g.arc(q[0],q[1],2.4,0,7); g.fill(); }
+
+    // in-plane construction
+    const m1=mul(u1,b1), m2=mul(u2,b2);
+    arrowP(g,P(O),P(m1),C.a1,2.5,[6,5]); arrowP(g,P(m1),P(p),C.a2,2.5,[6,5]); arrowP(g,P(O),P(m2),C.a2,2.5,[6,5]); arrowP(g,P(m2),P(p),C.a1,2.5,[6,5]);
+    arrowP(g,P(O),P(u1),C.a1,4.5); labelP(g,P(u1),'a₁',C.a1); arrowP(g,P(O),P(u2),C.a2,4.5); labelP(g,P(u2),'a₂',C.a2);
+
+    if(bFront){ offStuff(); bDot(); }
+
+    $('ask').textContent='Two vectors in ℝ³ span a plane through the origin. Is b on it?';
+    $('hint').textContent='Drag to rotate. β₁ and β₂ move b inside the plane. The third slider lifts b off it.';
+    $('eq').innerHTML = `<i>b</i> = <span class="c1">${f2(b1)} <i>a</i>₁</span> <span class="c2">${sgn(b2)} <i>a</i>₂</span>`+(t===0?'':` <span class="c3">${sgn(t)} <i>n</i></span>`);
+    $('reachLab').textContent='The span of a₁ and a₂ is the shaded plane.';
+    $('reach').innerHTML = t===0
+      ? '<span class="good">b is on the plane.</span><small>It is a linear combination of a₁ and a₂, so b ∈ span{a₁, a₂}.</small>'
+      : `<span class="badc">b is off the plane, by ${f2(Math.abs(t))}.</span><small>No choice of β₁, β₂ reaches it: it needs a direction <i>n</i> that a₁ and a₂ do not have. The closest reachable point is the white dot below b. That is a projection.</small>`;
+  }
+
+  // ---------- interaction
+  const cv=$('cv');
+  function toWorld(e){ const rc=cv.getBoundingClientRect(), sc=Math.min(rc.width,rc.height)/(2*R); return [(e.clientX-rc.left-rc.width/2)/sc,-(e.clientY-rc.top-rc.height/2)/sc]; }
+  cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); cv.style.cursor='grabbing';
+    if(dim===3){ last=[e.clientX,e.clientY]; return; }
+    const m=toWorld(e), d=v=>Math.hypot(m[0]-v[0],m[1]-v[1]), c=[['b',d(bNow)-0.05],['a1',d(a1)],['a2',d(a2)]].sort((p,q)=>p[1]-q[1]); if(c[0][1]<0.55) drag=c[0][0]; });
+  cv.addEventListener('pointermove',e=>{
+    if(dim===3){ if(!last) return; az-=(e.clientX-last[0])*0.01; el=Math.min(1.5,Math.max(-0.3,el+(e.clientY-last[1])*0.01)); last=[e.clientX,e.clientY]; draw(); return; }
+    if(!drag) return; const m=toWorld(e).map(v=>Math.max(-R+.05,Math.min(R-.05,v))), cl=v=>Math.max(-4,Math.min(4,v));
+    if(drag==='b'){ if(isLine()){ const b2=+$('s2').value, n2=a1[0]*a1[0]+a1[1]*a1[1]; $('s1').value=cl(((m[0]-b2*a2[0])*a1[0]+(m[1]-b2*a2[1])*a1[1])/n2); }
+                    else { const D=det(); $('s1').value=cl((m[0]*a2[1]-m[1]*a2[0])/D); $('s2').value=cl((a1[0]*m[1]-a1[1]*m[0])/D); } }
+    if(drag==='a1'&&Math.hypot(...m)>.2) a1=m; if(drag==='a2'&&Math.hypot(...m)>.2) a2=m; draw(); });
+  const end=()=>{drag=null; last=null; cv.style.cursor='grab';}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+
+  function reset(){ samples=[]; a1=[1.4,0.4]; a2=[0.3,1.2]; u1=V0[0].slice(); u2=V0[1].slice(); az=-0.9; el=0.38; $('s1').value=1; $('s2').value=0.8; $('s3').value=0; draw(); }
+  document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{ dim=+b.dataset.v; samples=[]; document.querySelectorAll('#tabs button').forEach(q=>q.classList.toggle('on',q===b));
+    for(const id of ['s1','s2']){ const lim=dim===3?2:4, v=Math.max(-lim,Math.min(lim,+$(id).value)); $(id).min=-lim; $(id).max=lim; $(id).value=v; } draw(); });
+  ['s1','s2','s3'].forEach(id=>$(id).addEventListener('input',draw));
+  $('btnSample').onclick=()=>{ samples=[]; for(let k=0;k<400;k++) samples.push([(Math.random()*2-1)*3,(Math.random()*2-1)*3]); draw(); };
+  $('btnOn').onclick=()=>{ $('s3').value=0; draw(); };
+  $('btnNew').onclick=()=>{ const r=()=>Math.random()*2-1; do{ u1=mul(unit([r(),r(),r()*0.7]),1.7); u2=mul(unit([r(),r(),r()*0.7]),1.7); }while(Math.hypot(...cross(u1,u2))<1.8); samples=[]; draw(); };
+  $('btnReset').onclick=reset;
+  window.addEventListener('resize',draw);
+  reset();
+})();
+</script>
+</body>
+</html>
