@@ -28,6 +28,16 @@
   tr.hl td input{box-shadow:0 0 0 2px var(--dep)}
   td.hlc input{box-shadow:0 0 0 2px var(--dep)}
   #hint{font-size:13px;color:var(--muted);margin-top:12px;text-align:center}
+  #space{margin-top:18px;border-top:1px solid var(--rule);padding-top:12px}
+  #space h2{font-size:14px;font-weight:600;margin:0 0 6px;color:var(--muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .toggle button{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--rule);background:#fff;cursor:pointer}
+  .toggle button:first-child{border-radius:4px 0 0 4px} .toggle button:last-child{border-radius:0 4px 4px 0;margin-left:-1px}
+  .toggle button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  #pw{position:relative;width:100%;height:360px}
+  #pc{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+  #spaceNote{font-size:13px;color:var(--muted);margin-top:6px}
+  th.user i,th.movie i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  th.movie i{margin:0 0 6px 0}
   aside{display:flex;flex-direction:column;gap:14px}
   section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
   section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
@@ -52,12 +62,14 @@
 <body>
 <header>
   <h1>Rank of a ratings matrix</h1>
-  <span>CS-573 Optimization Methods · Lecture 2 · 6 users × 5 movies</span>
+  <span>CS-573 Optimization Methods · Lecture 2 · 3 users × 3 movies</span>
 </header>
 <main>
   <div id="stage">
     <table id="grid"></table>
     <div id="hint">Click a user to see whether their ratings can be built from other users' ratings. Click a movie to do the same for columns. Edit any score.</div>
+    <div id="space"><h2><span class="toggle"><button id="vUsers" class="on">Users in movie space</button><button id="vMovies">Movies in user space</button></span><span style="font-weight:400">· drag to rotate</span></h2>
+      <div id="pw"><canvas id="pc"></canvas></div><div id="spaceNote"></div></div>
   </div>
   <aside>
     <section>
@@ -65,10 +77,9 @@
       <select id="preset">
         <optgroup label="Rank 1"><option value="r1">One shared ranking, different generosity</option></optgroup>
         <optgroup label="Rank 2"><option value="r2" selected>Two tastes: action and drama</option></optgroup>
-        <optgroup label="Rank 3"><option value="r3">Three tastes: action, drama, comedy</option></optgroup>
-        <optgroup label="Rank 5"><option value="real">Two tastes, rounded, with a few quirks</option></optgroup>
+        <optgroup label="Rank 3"><option value="r3">Three tastes: action, drama, comedy</option><option value="real">Two tastes with a small quirk</option></optgroup>
+        
       </select>
-      <div class="note" id="presetNote"></div>
       <div class="row"><button id="reset">Reset edits</button></div>
     </section>
     <section id="sel"></section>
@@ -79,23 +90,25 @@
 
 <script>
 (() => {
-const users=['Alice','Bob','Carol','Dana','Eli','Fay'];
-const movies=['Iron Horizon','Quiet Harbor','Laugh Track','Desert Pursuit','Last Letter'];
-const genres=['action','drama','comedy','action','drama'];
-const M=6,N=5;
+const users=['Alice','Bob','Carol'];
+const movies=['Top Gun: Maverick','Oppenheimer','Barbie'];
+const genres=['action','drama','comedy'];
+const M=3,N=3;
+const ucol=['#1f5fbf','#d23c3c','#2a9d5c'];
+const mcol=['#e8801a','#8a4fc9','#0b8a7a'];
 
 /* ---------- presets ---------- */
 const mix=(P,w)=>w.map(row=>{const v=new Array(N).fill(0);row.forEach((c,k)=>P[k].forEach((p,j)=>v[j]+=c*p));return v;});
-const P1=[5,1,2,5,1],P2=[1,5,2,1,5],P3=[1,1,5,2,1],C=[5,3,1,4,2];
+const P1=[5,1,2],P2=[1,5,2],P3=[1,2,5],C=[5,3,1];
 const presets={
   r1:{note:'Every user agrees on which movie is best; they only differ in how generous they are. One row is enough to build all the others.',
-      A:mix([C],[[1],[0.8],[0.6],[0.9],[0.5],[0.7]])},
-  r2:{note:'Alice is a pure action fan, Bob a pure drama fan. Everyone else is a blend of the two, so every row can be built from those two.',
-      A:mix([P1,P2],[[1,0],[0,1],[0.5,0.5],[0.8,0.2],[0.2,0.8],[0.6,0.4]])},
+      A:mix([C],[[1],[0.8],[0.6]])},
+  r2:{note:'Alice likes action and sci-fi, Bob likes drama and romance. Everyone else is a blend of the two, so every row can be built from those two.',
+      A:mix([P1,P2],[[1,0],[0,1],[0.5,0.5]])},
   r3:{note:'A third taste (Carol, comedy) that the first two cannot produce. Three prototype users are now needed.',
-      A:mix([P1,P2,P3],[[1,0,0],[0,1,0],[0,0,1],[0.5,0.5,0],[0,0.5,0.5],[0.4,0.3,0.3]])},
+      A:mix([P1,P2,P3],[[1,0,0],[0,1,0],[0,0,1]])},
   real:{note:'The two-taste table with scores rounded to whole stars and a few personal quirks. The rank is 5 — but is the structure really gone?',
-      A:[[5,1,2,5,1],[1,5,2,1,5],[3,3,4,3,3],[4,2,2,4,2],[2,4,2,3,4],[4,3,2,3,2]]},
+      A:[[5,1,2],[1,5,2],[3,3,3]]},
 };
 let presetKey='r2';
 let A0=presets.r2.A.map(r=>r.slice());
@@ -170,11 +183,11 @@ const cellInputs=[];
 function buildTable(){
   grid.innerHTML='';
   const thead=document.createElement('tr');thead.appendChild(document.createElement('th'));
-  movies.forEach((m,j)=>{const th=document.createElement('th');th.className='movie';th.textContent=m;th.title=genres[j];th.onclick=()=>select('movie',j);thead.appendChild(th);});
+  movies.forEach((m,j)=>{const th=document.createElement('th');th.className='movie';th.innerHTML=`<i style="background:${mcol[j]}"></i>${m}`;th.title=genres[j];th.onclick=()=>select('movie',j);thead.appendChild(th);});
   grid.appendChild(thead);
   for(let i=0;i<M;i++){
     const tr=document.createElement('tr');
-    const th=document.createElement('th');th.className='user';th.textContent=users[i];th.onclick=()=>select('user',i);tr.appendChild(th);
+    const th=document.createElement('th');th.className='user';th.innerHTML=`<i style="background:${ucol[i]}"></i>${users[i]}`;th.onclick=()=>select('user',i);tr.appendChild(th);
     cellInputs[i]=[];
     for(let j=0;j<N;j++){
       const td=document.createElement('td');const inp=document.createElement('input');
@@ -192,7 +205,7 @@ function buildTable(){
 }
 function select(type,i){sel=(sel&&sel.type===type&&sel.i===i)?null:{type,i};update();}
 document.getElementById('preset').addEventListener('change',e=>{
-  presetKey=e.target.value;A0=presets[presetKey].A.map(r=>r.slice());A=A0.map(r=>r.slice());sel=null;lastEdit=null;update();
+  presetKey=e.target.value;autoAlign=true;A0=presets[presetKey].A.map(r=>r.slice());A=A0.map(r=>r.slice());sel=null;lastEdit=null;update();
 });
 document.getElementById('reset').onclick=()=>{A=A0.map(r=>r.slice());lastEdit=null;update();};
 
@@ -206,7 +219,7 @@ function recipeText(rec,names,self){
   if(!rec)return '';
   const mixTxt=mixText(rec.idx,rec.c,names);
   if(rec.exact)return `<b class="dep">${self} depends on the others.</b><br>${self} = ${mixTxt}`;
-  return `<b class="ind">${self} is independent</b> — no mix of the other ${names===users?'users':'movies'} reproduces it.<br>Closest mix: ${mixTxt}<br>Mismatch: ${f(rec.res)} (root-sum-square over the ${names===users?'five movies':'six users'})`;
+  return `<b class="ind">${self} is independent</b> — no mix of the other ${names===users?'users':'movies'} reproduces it.<br>Closest mix: ${mixTxt}<br>Mismatch: ${f(rec.res)} (root-sum-square over the ${names===users?'five movies':'five users'})`;
 }
 function update(){
   const {r,s}=rankOf(A);
@@ -228,8 +241,8 @@ function update(){
   });
 
   const selEl=document.getElementById('sel');
-  if(!sel)selEl.innerHTML='<h2>Dependence check</h2><div class="note">Click a user (row) or a movie (column) to test whether it can be built from the others.</div>';
-  else{
+  selEl.style.display=sel?'':'none';
+  if(sel){
     const names=sel.type==='user'?users:movies;
     selEl.innerHTML=`<h2>Dependence check · ${names[sel.i]}</h2><div class="recipe">${recipeText(rec,names,names[sel.i])}</div>
       <div class="note">${sel.type==='user'?'A row that depends on the others adds no new taste to the table.':'A column that depends on the others adds no new information about the movies.'}</div>`;
@@ -238,46 +251,96 @@ function update(){
   const pidx=prototypes(rows,-1);
   let plist='<div class="proto">';
   pidx.forEach(k=>plist+=`<div class="p">${users[k]}</div>`);
-  [0,1,2,3,4,5].filter(i=>!pidx.includes(i)).forEach(i=>{
+  [0,1,2].filter(i=>!pidx.includes(i)).forEach(i=>{
     const rr=lsq(pidx.map(k=>rows[k]),rows[i]);
     plist+=`<div>${users[i]} = ${rr?mixText(pidx,rr.c,users):'0'}</div>`;
   });
   plist+='</div>';
-  document.getElementById('protos').innerHTML=`<h2>Prototype users (${pidx.length})</h2>${plist}
-    <div class="note">${pidx.length>=Math.min(M,N)?'Every user adds something new; no smaller set of prototypes describes the table.':'Everyone else is a mix of the prototypes. The number of prototypes is the rank.'}</div>`;
+  document.getElementById('protos').innerHTML=`<h2>Prototype users (${pidx.length})</h2>${plist}`;
 
-  let fix='';
-  if(lastEdit&&r>lastEdit.before){
-    const {i,j}=lastEdit;
-    const rowsNoJ=rows.map(rw=>rw.filter((_,c)=>c!==j));
-    const rc=recipe(rowsNoJ,i);
-    if(rc&&rc.exact){
-      let v=0;rc.idx.forEach((k,t)=>v+=rc.c[t]*rows[k][j]);
-      fix=`<div class="fix">Changing ${users[i]}'s score for ${movies[j]} raised the rank from ${lastEdit.before} to ${r}: ${users[i]} no longer fits any mix of the other users. The value that keeps ${users[i]} dependent is <b>${f1(v)}</b>.
-        <div class="row"><button id="applyFix">Set it to ${f1(v)}</button></div></div>`;
-    }
-  }
-  let near='';
-  for(let k=1;k<r;k++)if(s[k]/(s[0]||1)<0.12){
-    const tail=Math.sqrt(s.slice(k).reduce((a,v)=>a+v*v,0)/s.reduce((a,v)=>a+v*v,0));
-    near=`<div class="note">Strictly, the rank is ${r}. But the table is close to rank ${k}: what a ${k}-prototype description cannot explain is only ${(100*tail).toFixed(0)}% of the total. Whether to call this "rank ${k} plus noise" is the question we take up in week 2B.</div>`;break;
-  }
   document.getElementById('read').innerHTML=`
     <h2>Readout</h2>
     <div id="rank">rank = ${r}</div>
     <table>
       <tr><td>independent rows (users)</td><td>${r}</td></tr>
       <tr><td>independent columns (movies)</td><td>${r}</td></tr>
-      <tr><td>rank ≤ min(6, 5)</td><td>${r} ≤ 5</td></tr>
+      <tr><td>rank ≤ min(3, 3)</td><td>${r} ≤ 3</td></tr>
     </table>
-    ${fix}${near}`;
-  const ab=document.getElementById('applyFix');
-  if(ab)ab.onclick=()=>{
-    const {i,j}=lastEdit;const rowsNoJ=rows.map(rw=>rw.filter((_,c)=>c!==j));const rc=recipe(rowsNoJ,i);
-    let v=0;rc.idx.forEach((k,t)=>v+=rc.c[t]*rows[k][j]);A[i][j]=v;lastEdit=null;update();
-  };
-  document.getElementById('presetNote').textContent=presets[presetKey].note;
+    `;
+  drawSpace(rec);
 }
+
+/* ---------- users as points in movie space ---------- */
+let spaceMode='users',yaw=-0.65,pitch=0.5,autoAlign=true;
+document.getElementById('vUsers').onclick=()=>{spaceMode='users';autoAlign=true;setSpaceBtns();update();};
+document.getElementById('vMovies').onclick=()=>{spaceMode='movies';autoAlign=true;setSpaceBtns();update();};
+function setSpaceBtns(){document.getElementById('vUsers').classList.toggle('on',spaceMode==='users');document.getElementById('vMovies').classList.toggle('on',spaceMode==='movies');}
+function jac3(S){return jacobi(S);}
+function subspace3(pts){ // pts: array of 3-vectors; returns {r, B: orthonormal basis (rows), ordered by importance}
+  const S=[[0,0,0],[0,0,0],[0,0,0]];
+  pts.forEach(p=>{for(let i=0;i<3;i++)for(let j=0;j<3;j++)S[i][j]+=p[i]*p[j];});
+  const e=jac3(S);const order=[0,1,2].sort((i,j)=>e.vals[j]-e.vals[i]);
+  const sig=order.map(i=>Math.sqrt(Math.max(e.vals[i],0)));
+  const B=order.map(i=>[e.vecs[0][i],e.vecs[1][i],e.vecs[2][i]]);
+  const tol=1e-6*Math.max(1,sig[0]);
+  return {r:sig.filter(v=>v>tol).length,B,sig};
+}
+function drawSpace(rec){
+  const cv=document.getElementById('pc'),ctx=cv.getContext('2d');
+  const rc=cv.parentElement.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  cv.width=rc.width*dpr;cv.height=rc.height*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);
+  const W=rc.width,H=rc.height,SC=Math.min(W,H)/13;
+  const um=spaceMode==='users';
+  const pts=um?A.map(r=>r.slice()):T(A);
+  const names=um?users:movies,axNames=um?movies:users,cols=um?ucol:mcol,selType=um?'user':'movie';
+  const {r,B}=subspace3(pts);
+  if(autoAlign){ // look at the subspace obliquely
+    let n=r===2?B[2]:r===1?B[1]:null;
+    if(n){const c=[2.5,2.5,2.5];if(n[0]*c[0]+n[1]*c[1]+n[2]*c[2]<0)n=n.map(v=>-v);
+      yaw=Math.atan2(n[0],n[1]);pitch=Math.atan2(-n[2],Math.hypot(n[0],n[1]))+0.6;}
+    else{yaw=-0.65;pitch=0.5;}
+    autoAlign=false;
+  }
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const P=p=>{const a=p[0]-2.5,b=p[1]-2.5,c=p[2]-2.5;const x1=a*cy-b*sy,y1=a*sy+b*cy,z1=c;return [W/2+x1*SC,H/2-(y1*sp+z1*cp)*SC];};
+  const O=[0,0,0];
+  const line=(a,b,col,w,dash)=>{const p=P(a),q=P(b);ctx.strokeStyle=col;ctx.lineWidth=w;ctx.setLineDash(dash||[]);ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.setLineDash([]);};
+  ctx.clearRect(0,0,W,H);
+  // axes 0..5 with ticks
+  const ax=[[6,0,0],[0,6,0],[0,0,6]];
+  ax.forEach(a=>line(O,a,'#b9b9b2',1.2));
+  for(let k=1;k<=5;k++){line([k,0,0],[k,0.12,0],'#b9b9b2',1);line([0,k,0],[0.12,k,0],'#b9b9b2',1);line([0,0,k],[0.12,0,k],'#b9b9b2',1);}
+  ctx.fillStyle='#6b6f78';ctx.font='12px Segoe UI,Roboto,sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ax.forEach((a,k)=>{const q=P(a.map(v=>v*1.08));ctx.fillText(axNames[k],q[0],q[1]);});
+  // subspace spanned by the users
+  const Lx=6;
+  if(r===2){const [u,v]=B;const q=[[1,1],[1,-1],[-1,-1],[-1,1]].map(([a,b])=>P(u.map((_,i)=>u[i]*a*Lx+v[i]*b*Lx)));
+    ctx.fillStyle='rgba(59,125,216,.14)';ctx.strokeStyle='#3b7dd8';ctx.lineWidth=1.2;ctx.beginPath();q.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fill();ctx.stroke();}
+  if(r===1){const u=B[0];line(u.map(v=>-v*Lx),u.map(v=>v*Lx),'#3b7dd8',3);}
+  // users
+  const userSel=sel&&sel.type===selType?sel.i:null;
+  const usedIdx=(rec&&userSel!==null&&rec.exact)?rec.idx.filter((k,t)=>Math.abs(rec.c[t])>5e-3):[];
+  pts.forEach((p,i)=>{
+    const q=P(p),isSel=i===userSel,dim=userSel!==null&&!isSel&&!usedIdx.includes(i);
+    ctx.globalAlpha=dim?0.3:1;
+    line(O,p,cols[i],isSel?2.5:1.2,isSel?null:[3,4]);
+    ctx.fillStyle=cols[i];ctx.beginPath();ctx.arc(q[0],q[1],isSel?8:6,0,6.283);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#1d1f24';ctx.font=(isSel?'600 ':'')+'13px Segoe UI,Roboto,sans-serif';ctx.textAlign='left';ctx.fillText(names[i],q[0]+10,q[1]-8);
+    ctx.globalAlpha=1;
+  });
+  // build-up of the selected user from the prototypes (head to tail)
+  if(usedIdx.length){
+    let acc=[0,0,0];
+    rec.idx.forEach((k,t)=>{const c=rec.c[t];if(Math.abs(c)<5e-3)return;const nxt=acc.map((v,i)=>v+c*pts[k][i]);line(acc,nxt,cols[k],2,[6,4]);acc=nxt;});
+  }
+  const dims=['only the origin','a line through the origin','a plane through the origin','all of the space'];
+  document.getElementById('spaceNote').textContent=um?`The three users, as points in movie space, lie in ${dims[r]}.`:`The three movies, as points in user space, lie in ${dims[r]}.`;
+}
+{const cv=document.getElementById('pc');let drag=null;
+ cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId);});
+ cv.addEventListener('pointermove',e=>{if(!drag)return;yaw+=(e.clientX-drag.x)*0.008;pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-drag.y)*0.008));drag={x:e.clientX,y:e.clientY};drawSpace(sel?recipe(sel.type==='user'?A:T(A),sel.i):null);});
+ cv.addEventListener('pointerup',()=>drag=null);cv.addEventListener('pointercancel',()=>drag=null);}
+window.addEventListener('resize',()=>update());
 
 buildTable();update();
 })();

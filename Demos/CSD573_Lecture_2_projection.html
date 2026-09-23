@@ -60,11 +60,7 @@
     <figure><div class="cw"><canvas id="cv"></canvas></div></figure>
 
     <div>
-      <div class="box">
-        <div class="ask" id="ask"></div>
-        <div class="hint" id="hint"></div>
-      </div>
-
+      <div class="ask hidden" id="ask"></div><div class="hint hidden" id="hint"></div>
       <div class="box">
         <div class="eq" id="eq"></div>
         <div class="slider"><label for="s1" id="l1">τ</label><input id="s1" type="range" min="-2" max="2" step="0.01" value="-0.4"><output id="o1"></output></div>
@@ -98,7 +94,7 @@
 (() => {
   const $=id=>document.getElementById(id);
   const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-  const C={ink:css('--ink'),muted:css('--muted'),a1:css('--a1'),a2:css('--a2'),you:css('--you'),best:css('--best'),bad:css('--bad')};
+  const C={ink:css('--ink'),muted:css('--muted'),a1:css('--a1'),a2:css('--a2'),you:css('--you'),best:css('--best'),bad:css('--bad'),err:'#8a4fc9'};
   const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2);
   let dim=2, drag=null, revealed=false, best=Infinity, last=null;
 
@@ -134,8 +130,7 @@
     const orthOK=r.ips.every(q=>Math.abs(q[1])<0.03);
     $('orth').innerHTML=r.ips.map(q=>`(<i>x</i> − <i>y</i>)ᵀ${q[0]} = <b class="${Math.abs(q[1])<0.03?'good':''}">${f2(q[1])}</b>`).join(' &nbsp;&nbsp; ');
     $('note').innerHTML = orthOK ? '<span class="good">The error x − y is orthogonal to S. This y is the projection: no point of S is closer.</span>'
-      : revealed ? 'At the green point the error is perpendicular to S. Move y there and watch the inner product go to zero.'
-      : 'Make the distance as small as you can. What happens to the inner product when you get close?';
+      : '';
   }
 
   // ======================= 2D: projection onto a line =======================
@@ -145,7 +140,7 @@
     for(let k=-R;k<=R;k++){ const col=k?'rgba(20,33,61,.07)':C.ink; lineP(g,P([k,-R]),P([k,R]),col,1); lineP(g,P([-R,k]),P([R,k]),col,1); }
     { const q=P(mul(u,2.75)); g.font='italic 20px "Cambria Math",Cambria,serif'; g.fillStyle=C.a1; g.textAlign='center'; g.textBaseline='middle'; g.fillText('S',q[0]-u[1]*-18,q[1]-u[0]*-18); }
     if(revealed){ const e=unit(add(x,xs,-1)), s=0.22; lineP(g,P(xs),P(x),C.best,3,[7,5]); square(g,[P(add(xs,u,s)),P(add(add(xs,u,s),e,s)),P(add(xs,e,s))],C.best); dotP(g,P(xs),8,C.best); labelP(g,P(xs),'x*',C.best,10,26); }
-    lineP(g,P(y),P(x),C.bad,3);
+    lineP(g,P(y),P(x),C.err,3);
     arrowP(g,P([0,0]),P(v),C.a1,4.5); labelP(g,P(v),'v',C.a1);
     dotP(g,P(y),9,C.you); labelP(g,P(y),'y',C.ink,-26,-8);
     dotP(g,P(x),9,'#fff'); labelP(g,P(x),'x',C.ink);
@@ -164,7 +159,7 @@
     for(const t of [-2,-1,0,1,2]){ lineP(g,[X(t),M.t],[X(t),h-M.b],'#eceef2',1); g.fillText(t,X(t),h-M.b+4); }
     lineP(g,[M.l,Y(0)],[w-M.r,Y(0)],C.ink,1); g.textAlign='right'; g.textBaseline='middle'; g.fillText('0',M.l-6,Y(0)); g.fillText(mx.toFixed(1),M.l-6,Y(mx/1.05));
     g.textAlign='right'; g.textBaseline='top'; g.font='italic 15px "Cambria Math",Cambria,serif'; g.fillText('τ',w-M.r,h-M.b+3);
-    g.strokeStyle=C.bad; g.lineWidth=2.5; g.beginPath(); for(let k=0;k<=160;k++){ const t=-2+k/40; k?g.lineTo(X(t),Y(f(t))):g.moveTo(X(t),Y(f(t))); } g.stroke();
+    g.strokeStyle=C.err; g.lineWidth=2.5; g.beginPath(); for(let k=0;k<=160;k++){ const t=-2+k/40; k?g.lineTo(X(t),Y(f(t))):g.moveTo(X(t),Y(f(t))); } g.stroke();
     if(revealed && Math.abs(tS)<=2){ lineP(g,[X(tS),M.t],[X(tS),h-M.b],C.best,2,[5,4]); dotP(g,[X(tS),Y(f(tS))],5,C.best,C.best); }
     dotP(g,[X(tau),Y(f(tau))],6,C.you);
   }
@@ -179,7 +174,7 @@
     const E=[[-L,-L,-L],[L,-L,-L],[L,L,-L],[-L,L,-L],[-L,-L,L],[L,-L,L],[L,L,L],[-L,L,L]];
     [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(e=>lineP(g,P(E[e[0]]),P(E[e[1]]),'#e3e5ea',1));
     [[L,0,0],[0,L,0],[0,0,L]].forEach(q=>lineP(g,P(mul(q,-1)),P(q),C.ink,1.2));
-    const above=()=>{ lineP(g,P(y),P(x3),C.bad,3);
+    const above=()=>{ lineP(g,P(y),P(x3),C.err,3);
       if(revealed){ lineP(g,P(xs),P(x3),C.best,3,[7,5]); const e=unit(u1), m=unit(add(x3,xs,-1)), k=0.28; square(g,[P(add(xs,e,k)),P(add(add(xs,e,k),m,k)),P(add(xs,m,k))],C.best); }
       dotP(g,P(x3),9,'#fff'); labelP(g,P(x3),'x',C.ink); };
     if(!front) above();
@@ -189,10 +184,11 @@
     { const q=P(add(mul(u1,-1.75),mul(u2,1.75))); g.font='italic 20px "Cambria Math",Cambria,serif'; g.fillStyle=C.a1; g.textAlign='center'; g.textBaseline='middle'; g.fillText('S',q[0],q[1]); }
     arrowP(g,P([0,0,0]),P(u1),C.a1,4.5); labelP(g,P(u1),'a₁',C.a1); arrowP(g,P([0,0,0]),P(u2),C.a2,4.5); labelP(g,P(u2),'a₂',C.a2);
     if(revealed){ dotP(g,P(xs),8,C.best); labelP(g,P(xs),'x*',C.best,10,26); }
+    lineP(g,P(mul(u1,b1)),P(y),C.a2,1.8,[6,5]); lineP(g,P(mul(u2,b2)),P(y),C.a1,1.8,[6,5]); dotP(g,P(mul(u1,b1)),4,C.a1,C.a1); dotP(g,P(mul(u2,b2)),4,C.a2,C.a2);
     dotP(g,P(y),9,C.you); labelP(g,P(y),'y',C.ink,-26,-8);
     if(front) above();
-    $('ask').textContent='Which point y of the plane S is closest to x?';
-    $('hint').textContent='Move y inside the plane with β₁ and β₂ and watch the distance. Drag the picture to rotate.';
+    $('ask').textContent='';
+    $('hint').textContent='';
     $('eq').innerHTML=`<i>y</i> = ${f2(b1)} <i>a</i>₁ ${b2<0?'−':'+'} ${f2(Math.abs(b2))} <i>a</i>₂`+(revealed?` &nbsp;&nbsp; <span class="good"><i>x</i>* = ${f2(c1)} <i>a</i>₁ ${c2<0?'−':'+'} ${f2(Math.abs(c2))} <i>a</i>₂</span>`:'');
     const e=add(x3,y,-1); return {d:len(e), dOpt:len(add(x3,xs,-1)), ips:[['<i>a</i>₁',dot(e,u1)],['<i>a</i>₂',dot(e,u2)]]};
   }
