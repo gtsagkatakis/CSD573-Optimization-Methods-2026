@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rank of a ratings matrix — CS-573 demo</title>
+<style>
+  :root{--bg:#fbfbf9;--ink:#1d1f24;--muted:#6b6f78;--rule:#dcdcd6;--blue:#3b7dd8;--hi:#e8801a;--dep:#2a9d5c;--ind:#d23c3c}
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px;display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+  header h1{font-size:22px;font-weight:600;margin:0}
+  header span{color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;padding:8px 24px 24px}
+  @media (max-width:960px){main{grid-template-columns:1fr}}
+  #stage{background:#fff;border:1px solid var(--rule);border-radius:6px;padding:18px;overflow-x:auto}
+  table{border-collapse:separate;border-spacing:4px;margin:0 auto}
+  th{font-weight:600;font-size:14px;padding:4px 6px;white-space:nowrap}
+  th.movie{writing-mode:vertical-rl;transform:rotate(180deg);text-align:left;height:110px;vertical-align:bottom;cursor:pointer;border-radius:4px}
+  th.user{text-align:right;cursor:pointer;border-radius:4px;padding-right:10px}
+  th.user:hover,th.movie:hover{background:#f0f0ec}
+  th.sel{background:var(--ink);color:#fff}
+  th.sel:hover{background:var(--ink)}
+  td{padding:0}
+  td input{width:64px;height:48px;text-align:center;font:inherit;font-size:17px;border:2px solid transparent;border-radius:6px;color:var(--ink);font-variant-numeric:tabular-nums}
+  td input:focus{outline:none;border-color:var(--ink)}
+  td input.edited{border-color:var(--hi)}
+  tr.hl td input{box-shadow:0 0 0 2px var(--dep)}
+  td.hlc input{box-shadow:0 0 0 2px var(--dep)}
+  #hint{font-size:13px;color:var(--muted);margin-top:12px;text-align:center}
+  aside{display:flex;flex-direction:column;gap:14px}
+  section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
+  section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+  select{width:100%;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  .note{font-size:13px;color:var(--muted);margin-top:6px}
+  #rank{font-size:30px;font-weight:600;line-height:1.1}
+  #read{font-size:14px}
+  #read table{border-collapse:collapse;width:100%;margin-top:6px;border-spacing:0}
+  #read td{padding:3px 0;vertical-align:top}
+  #read td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  .recipe{margin-top:6px;padding:8px 10px;border-radius:4px;background:#f3f5f9;font-size:14px;font-variant-numeric:tabular-nums}
+  .recipe b.dep{color:var(--dep)} .recipe b.ind{color:var(--ind)}
+  .proto{font-size:14px} .proto div{padding:2px 0;font-variant-numeric:tabular-nums}
+  .proto .p{font-weight:600}
+  .row{display:flex;gap:8px;margin-top:8px}
+  .row button{flex:1;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff;cursor:pointer}
+  .row button:hover{background:#f3f3ef}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--hi);outline-offset:1px}
+  .fix{margin-top:8px;padding:8px 10px;border-radius:4px;background:#fff4e8;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rank of a ratings matrix</h1>
+  <span>CS-573 Optimization Methods · Lecture 2 · 6 users × 5 movies</span>
+</header>
+<main>
+  <div id="stage">
+    <table id="grid"></table>
+    <div id="hint">Click a user to see whether their ratings can be built from other users' ratings. Click a movie to do the same for columns. Edit any score.</div>
+  </div>
+  <aside>
+    <section>
+      <h2>Ratings table</h2>
+      <select id="preset">
+        <optgroup label="Rank 1"><option value="r1">One shared ranking, different generosity</option></optgroup>
+        <optgroup label="Rank 2"><option value="r2" selected>Two tastes: action and drama</option></optgroup>
+        <optgroup label="Rank 3"><option value="r3">Three tastes: action, drama, comedy</option></optgroup>
+        <optgroup label="Rank 5"><option value="real">Two tastes, rounded, with a few quirks</option></optgroup>
+      </select>
+      <div class="note" id="presetNote"></div>
+      <div class="row"><button id="reset">Reset edits</button></div>
+    </section>
+    <section id="sel"></section>
+    <section id="protos"></section>
+    <section id="read"></section>
+  </aside>
+</main>
+
+<script>
+(() => {
+const users=['Alice','Bob','Carol','Dana','Eli','Fay'];
+const movies=['Iron Horizon','Quiet Harbor','Laugh Track','Desert Pursuit','Last Letter'];
+const genres=['action','drama','comedy','action','drama'];
+const M=6,N=5;
+
+/* ---------- presets ---------- */
+const mix=(P,w)=>w.map(row=>{const v=new Array(N).fill(0);row.forEach((c,k)=>P[k].forEach((p,j)=>v[j]+=c*p));return v;});
+const P1=[5,1,2,5,1],P2=[1,5,2,1,5],P3=[1,1,5,2,1],C=[5,3,1,4,2];
+const presets={
+  r1:{note:'Every user agrees on which movie is best; they only differ in how generous they are. One row is enough to build all the others.',
+      A:mix([C],[[1],[0.8],[0.6],[0.9],[0.5],[0.7]])},
+  r2:{note:'Alice is a pure action fan, Bob a pure drama fan. Everyone else is a blend of the two, so every row can be built from those two.',
+      A:mix([P1,P2],[[1,0],[0,1],[0.5,0.5],[0.8,0.2],[0.2,0.8],[0.6,0.4]])},
+  r3:{note:'A third taste (Carol, comedy) that the first two cannot produce. Three prototype users are now needed.',
+      A:mix([P1,P2,P3],[[1,0,0],[0,1,0],[0,0,1],[0.5,0.5,0],[0,0.5,0.5],[0.4,0.3,0.3]])},
+  real:{note:'The two-taste table with scores rounded to whole stars and a few personal quirks. The rank is 5 — but is the structure really gone?',
+      A:[[5,1,2,5,1],[1,5,2,1,5],[3,3,4,3,3],[4,2,2,4,2],[2,4,2,3,4],[4,3,2,3,2]]},
+};
+let presetKey='r2';
+let A0=presets.r2.A.map(r=>r.slice());
+let A=A0.map(r=>r.slice());
+let sel=null;           // {type:'user'|'movie', i}
+let lastEdit=null;      // {i,j,before}
+
+/* ---------- linear algebra (small, general) ---------- */
+const dot=(a,b)=>a.reduce((s,v,i)=>s+v*b[i],0);
+const norm=a=>Math.sqrt(dot(a,a));
+const sub=(a,b)=>a.map((v,i)=>v-b[i]);
+const scale=(a,s)=>a.map(v=>v*s);
+const T=X=>X[0].map((_,j)=>X.map(r=>r[j]));
+function jacobi(S){ // symmetric n×n
+  const n=S.length,a=S.map(r=>r.slice()),V=Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>+(i===j)));
+  for(let sweep=0;sweep<50;sweep++){
+    let off=0;for(let p=0;p<n;p++)for(let q=p+1;q<n;q++)off+=a[p][q]*a[p][q];
+    if(off<1e-22)break;
+    for(let p=0;p<n;p++)for(let q=p+1;q<n;q++){
+      if(Math.abs(a[p][q])<1e-300)continue;
+      const th=0.5*Math.atan2(2*a[p][q],a[q][q]-a[p][p]),c=Math.cos(th),s=Math.sin(th);
+      for(let k=0;k<n;k++){const akp=a[k][p],akq=a[k][q];a[k][p]=c*akp-s*akq;a[k][q]=s*akp+c*akq;}
+      for(let k=0;k<n;k++){const apk=a[p][k],aqk=a[q][k];a[p][k]=c*apk-s*aqk;a[q][k]=s*apk+c*aqk;}
+      for(let k=0;k<n;k++){const vkp=V[k][p],vkq=V[k][q];V[k][p]=c*vkp-s*vkq;V[k][q]=s*vkp+c*vkq;}
+    }
+  }
+  return {vals:a.map((r,i)=>r[i]),vecs:V};
+}
+function singularValues(X){
+  const Xt=T(X),n=X[0].length,S=Array.from({length:n},()=>new Array(n).fill(0));
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++)for(let k=0;k<X.length;k++)S[i][j]+=Xt[i][k]*X[k][j];
+  return jacobi(S).vals.map(v=>Math.sqrt(Math.max(v,0))).sort((a,b)=>b-a);
+}
+function rankOf(X){const s=singularValues(X);const tol=1e-7*Math.max(1,s[0]);return {r:s.filter(v=>v>tol).length,s};}
+// least squares: c with sum_k c_k B[k] ≈ target; B rows independent
+function lsq(B,target){
+  const k=B.length;if(k===0)return {c:[],res:norm(target)};
+  const G=B.map(bi=>B.map(bj=>dot(bi,bj))),h=B.map(bi=>dot(bi,target));
+  for(let i=0;i<k;i++){
+    let p=i;for(let r=i+1;r<k;r++)if(Math.abs(G[r][i])>Math.abs(G[p][i]))p=r;
+    [G[i],G[p]]=[G[p],G[i]];[h[i],h[p]]=[h[p],h[i]];
+    if(Math.abs(G[i][i])<1e-12)return null;
+    for(let r=0;r<k;r++)if(r!==i){const f=G[r][i]/G[i][i];for(let c=i;c<k;c++)G[r][c]-=f*G[i][c];h[r]-=f*h[i];}
+  }
+  const c=h.map((v,i)=>v/G[i][i]);
+  const fit=new Array(target.length).fill(0);B.forEach((b,i)=>b.forEach((v,j)=>fit[j]+=c[i]*v));
+  return {c,res:norm(sub(target,fit))};
+}
+// greedy: rows (in order) that are independent of the ones already picked
+function prototypes(rows,exclude){
+  const idx=[],basis=[];
+  const tolScale=Math.max(1,...rows.map(norm));
+  rows.forEach((r,i)=>{
+    if(i===exclude||norm(r)<1e-9)return;
+    let v=r.slice();for(const b of basis)v=sub(v,scale(b,dot(v,b)));
+    if(norm(v)>1e-7*tolScale){basis.push(scale(v,1/norm(v)));idx.push(i);}
+  });
+  return idx;
+}
+// express vector i as a combination of prototypes chosen among the other vectors
+function recipe(rows,i){
+  const idx=prototypes(rows,i);
+  const r=lsq(idx.map(k=>rows[k]),rows[i]);
+  if(!r)return null;
+  const tol=1e-6*Math.max(1,norm(rows[i]));
+  return {idx,c:r.c,res:r.res,exact:r.res<tol};
+}
+
+/* ---------- table ---------- */
+const grid=document.getElementById('grid');
+const cellInputs=[];
+function buildTable(){
+  grid.innerHTML='';
+  const thead=document.createElement('tr');thead.appendChild(document.createElement('th'));
+  movies.forEach((m,j)=>{const th=document.createElement('th');th.className='movie';th.textContent=m;th.title=genres[j];th.onclick=()=>select('movie',j);thead.appendChild(th);});
+  grid.appendChild(thead);
+  for(let i=0;i<M;i++){
+    const tr=document.createElement('tr');
+    const th=document.createElement('th');th.className='user';th.textContent=users[i];th.onclick=()=>select('user',i);tr.appendChild(th);
+    cellInputs[i]=[];
+    for(let j=0;j<N;j++){
+      const td=document.createElement('td');const inp=document.createElement('input');
+      inp.type='number';inp.step='0.1';inp.min='0';inp.max='5';inp.setAttribute('aria-label',`${users[i]} rates ${movies[j]}`);
+      inp.addEventListener('input',()=>{
+        const v=parseFloat(inp.value);if(isNaN(v))return;
+        const before=rankOf(A).r;A[i][j]=v;
+        if(!lastEdit||lastEdit.i!==i||lastEdit.j!==j)lastEdit={i,j,before};
+        update();
+      });
+      td.appendChild(inp);tr.appendChild(td);cellInputs[i][j]=inp;
+    }
+    grid.appendChild(tr);
+  }
+}
+function select(type,i){sel=(sel&&sel.type===type&&sel.i===i)?null:{type,i};update();}
+document.getElementById('preset').addEventListener('change',e=>{
+  presetKey=e.target.value;A0=presets[presetKey].A.map(r=>r.slice());A=A0.map(r=>r.slice());sel=null;lastEdit=null;update();
+});
+document.getElementById('reset').onclick=()=>{A=A0.map(r=>r.slice());lastEdit=null;update();};
+
+/* ---------- rendering ---------- */
+const f=v=>(Math.abs(v)<5e-3?0:v).toFixed(2);
+const f1=v=>(Math.abs(v)<5e-3?0:v).toFixed(1);
+function cellColor(v){const t=Math.max(0,Math.min(1,v/5));return `rgba(59,125,216,${0.06+0.5*t})`;}
+const term=(c,name)=>`${f(c)}·${name}`;
+function mixText(idx,c,names){const p=idx.map((k,t)=>term(c[t],names[k])).filter((_,t)=>Math.abs(c[t])>5e-3);return p.length?p.join(' + '):'0';}
+function recipeText(rec,names,self){
+  if(!rec)return '';
+  const mixTxt=mixText(rec.idx,rec.c,names);
+  if(rec.exact)return `<b class="dep">${self} depends on the others.</b><br>${self} = ${mixTxt}`;
+  return `<b class="ind">${self} is independent</b> — no mix of the other ${names===users?'users':'movies'} reproduces it.<br>Closest mix: ${mixTxt}<br>Mismatch: ${f(rec.res)} (root-sum-square over the ${names===users?'five movies':'six users'})`;
+}
+function update(){
+  const {r,s}=rankOf(A);
+  const rows=A,colsV=T(A);
+  for(let i=0;i<M;i++)for(let j=0;j<N;j++){
+    const inp=cellInputs[i][j];
+    if(document.activeElement!==inp)inp.value=f1(A[i][j]);
+    inp.style.background=cellColor(A[i][j]);
+    inp.classList.toggle('edited',Math.abs(A[i][j]-A0[i][j])>1e-9);
+  }
+  grid.querySelectorAll('th.user').forEach((th,i)=>th.classList.toggle('sel',!!sel&&sel.type==='user'&&sel.i===i));
+  grid.querySelectorAll('th.movie').forEach((th,j)=>th.classList.toggle('sel',!!sel&&sel.type==='movie'&&sel.i===j));
+  const rec=sel?recipe(sel.type==='user'?rows:colsV,sel.i):null;
+  const used=k=>!!rec&&rec.exact&&rec.idx.includes(k)&&Math.abs(rec.c[rec.idx.indexOf(k)])>5e-3;
+  grid.querySelectorAll('tr').forEach((tr,k)=>{
+    tr.classList.toggle('hl',sel&&sel.type==='user'&&used(k-1));
+    if(k===0)return;
+    [...tr.children].slice(1).forEach((td,j)=>td.classList.toggle('hlc',sel&&sel.type==='movie'&&used(j)));
+  });
+
+  const selEl=document.getElementById('sel');
+  if(!sel)selEl.innerHTML='<h2>Dependence check</h2><div class="note">Click a user (row) or a movie (column) to test whether it can be built from the others.</div>';
+  else{
+    const names=sel.type==='user'?users:movies;
+    selEl.innerHTML=`<h2>Dependence check · ${names[sel.i]}</h2><div class="recipe">${recipeText(rec,names,names[sel.i])}</div>
+      <div class="note">${sel.type==='user'?'A row that depends on the others adds no new taste to the table.':'A column that depends on the others adds no new information about the movies.'}</div>`;
+  }
+
+  const pidx=prototypes(rows,-1);
+  let plist='<div class="proto">';
+  pidx.forEach(k=>plist+=`<div class="p">${users[k]}</div>`);
+  [0,1,2,3,4,5].filter(i=>!pidx.includes(i)).forEach(i=>{
+    const rr=lsq(pidx.map(k=>rows[k]),rows[i]);
+    plist+=`<div>${users[i]} = ${rr?mixText(pidx,rr.c,users):'0'}</div>`;
+  });
+  plist+='</div>';
+  document.getElementById('protos').innerHTML=`<h2>Prototype users (${pidx.length})</h2>${plist}
+    <div class="note">${pidx.length>=Math.min(M,N)?'Every user adds something new; no smaller set of prototypes describes the table.':'Everyone else is a mix of the prototypes. The number of prototypes is the rank.'}</div>`;
+
+  let fix='';
+  if(lastEdit&&r>lastEdit.before){
+    const {i,j}=lastEdit;
+    const rowsNoJ=rows.map(rw=>rw.filter((_,c)=>c!==j));
+    const rc=recipe(rowsNoJ,i);
+    if(rc&&rc.exact){
+      let v=0;rc.idx.forEach((k,t)=>v+=rc.c[t]*rows[k][j]);
+      fix=`<div class="fix">Changing ${users[i]}'s score for ${movies[j]} raised the rank from ${lastEdit.before} to ${r}: ${users[i]} no longer fits any mix of the other users. The value that keeps ${users[i]} dependent is <b>${f1(v)}</b>.
+        <div class="row"><button id="applyFix">Set it to ${f1(v)}</button></div></div>`;
+    }
+  }
+  let near='';
+  for(let k=1;k<r;k++)if(s[k]/(s[0]||1)<0.12){
+    const tail=Math.sqrt(s.slice(k).reduce((a,v)=>a+v*v,0)/s.reduce((a,v)=>a+v*v,0));
+    near=`<div class="note">Strictly, the rank is ${r}. But the table is close to rank ${k}: what a ${k}-prototype description cannot explain is only ${(100*tail).toFixed(0)}% of the total. Whether to call this "rank ${k} plus noise" is the question we take up in week 2B.</div>`;break;
+  }
+  document.getElementById('read').innerHTML=`
+    <h2>Readout</h2>
+    <div id="rank">rank = ${r}</div>
+    <table>
+      <tr><td>independent rows (users)</td><td>${r}</td></tr>
+      <tr><td>independent columns (movies)</td><td>${r}</td></tr>
+      <tr><td>rank ≤ min(6, 5)</td><td>${r} ≤ 5</td></tr>
+    </table>
+    ${fix}${near}`;
+  const ab=document.getElementById('applyFix');
+  if(ab)ab.onclick=()=>{
+    const {i,j}=lastEdit;const rowsNoJ=rows.map(rw=>rw.filter((_,c)=>c!==j));const rc=recipe(rowsNoJ,i);
+    let v=0;rc.idx.forEach((k,t)=>v+=rc.c[t]*rows[k][j]);A[i][j]=v;lastEdit=null;update();
+  };
+  document.getElementById('presetNote').textContent=presets[presetKey].note;
+}
+
+buildTable();update();
+})();
+</script>
+</body>
+</html>

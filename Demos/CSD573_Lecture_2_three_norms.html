@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Three vector norms</title>
+<style>
+  :root{--ink:#14213d;--muted:#5b6478;--paper:#fbfbf8;--panel:#fff;--rule:#d9dce3;
+        --l1:#2f5d8a;--l2:#e08a00;--li:#0b8a7a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:17px/1.45 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1280px;margin:0 auto;padding:20px 24px 28px}
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 28px;margin-bottom:14px}
+  h1{font-size:30px;line-height:1.1;margin:0;font-weight:650;letter-spacing:-.01em}
+  .sub{font-size:18px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  figure{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px}
+  figcaption{font-size:15px;color:var(--muted);padding:2px 4px 6px}
+  .cw{position:relative;width:100%;aspect-ratio:1/1;max-height:calc(100vh - 150px);margin:0 auto}
+  .bw{position:relative;width:100%;height:230px}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+  .card{background:var(--panel);border:1px solid var(--rule);border-left-width:8px;border-radius:6px;padding:10px 16px;margin-bottom:12px;
+        display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px 16px}
+  .card.l1{border-left-color:var(--l1)} .card.l2{border-left-color:var(--l2)} .card.li{border-left-color:var(--li)}
+  .card h2{margin:0;font-size:17px;font-weight:600}
+  .card h2 label{display:flex;gap:8px;align-items:center;cursor:pointer}
+  .card.off{opacity:.55}
+  .card.off .f,.card.off .v{visibility:hidden}
+  .card .f{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:21px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow-x:auto}
+  .card .v{font-size:36px;font-weight:650;font-variant-numeric:tabular-nums;grid-row:1/3;grid-column:2}
+  .l1 .v{color:var(--l1)} .l2 .v{color:var(--l2)} .li .v{color:var(--li)}
+  .box{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 18px;margin-bottom:12px}
+  .row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center}
+  .row label{font-size:16px;display:flex;gap:6px;align-items:center;cursor:pointer}
+  input[type=checkbox]{width:18px;height:18px;accent-color:var(--ink)}
+  button{font:inherit;font-size:16px;padding:6px 14px;border-radius:5px;border:1px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+  button:hover{background:#eef0f5}
+  button:focus-visible,input:focus-visible{outline:3px solid var(--l2);outline-offset:2px}
+  h3{font-size:20px;margin:22px 0 10px;font-weight:650}
+  .read{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end;font-variant-numeric:tabular-nums}
+  .read div span{display:block;font-size:14px;color:var(--muted)}
+  .read div b{font-size:26px;font-weight:650}
+  .note{font-size:16px;color:var(--muted);margin-top:8px;min-height:1.4em}
+  .m{font-family:"Cambria Math",Cambria,serif}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Three ways to measure a vector</h1>
+    <div class="sub">ℓ₁ (sum) · ℓ₂ (Euclidean) · ℓ∞ (max)</div>
+  </header>
+
+  <div class="grid">
+    <figure>
+      <figcaption>Drag the point <span class="m"><i>x</i></span>. Tick a norm on the right to show it.</figcaption>
+      <div class="cw"><canvas id="cv"></canvas></div>
+    </figure>
+
+    <div>
+      <div class="card l1" id="card_l1"><h2><label><input type="checkbox" id="s_l1" checked> ℓ₁ norm: add up the sizes of the entries</label></h2><div class="v" id="v1"></div><div class="f" id="f1"></div></div>
+      <div class="card l2" id="card_l2"><h2><label><input type="checkbox" id="s_l2" checked> ℓ₂ norm: straight-line length</label></h2><div class="v" id="v2"></div><div class="f" id="f2"></div></div>
+      <div class="card li" id="card_li"><h2><label><input type="checkbox" id="s_li" checked> ℓ∞ norm: size of the largest entry</label></h2><div class="v" id="vi"></div><div class="f" id="fi"></div></div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C={ink:css('--ink'),muted:css('--muted'),rule:css('--rule'),l1:css('--l1'),l2:css('--l2'),li:css('--li')};
+  const R=3, f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2);
+  let x=[2,1.5], drag=null;
+
+  function ctx(cv){ const rc=cv.getBoundingClientRect(), d=window.devicePixelRatio||1;
+    cv.width=Math.round(rc.width*d); cv.height=Math.round(rc.height*d);
+    const g=cv.getContext('2d'); g.setTransform(d,0,0,d,0,0); return {g,w:rc.width,h:rc.height}; }
+
+  // ---------------- 2D picture
+  function draw2(){
+    const {g,w,h}=ctx($('cv')), sc=Math.min(w,h)/(2*R), P=v=>[w/2+v[0]*sc,h/2-v[1]*sc];
+    g.clearRect(0,0,w,h); g.font='14px "Segoe UI",system-ui,sans-serif'; g.lineWidth=1;
+    for(let k=-R;k<=R;k++){ g.strokeStyle=k?'#eceef2':C.ink;
+      let a=P([k,-R]),b=P([k,R]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke();
+      a=P([-R,k]); b=P([R,k]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke();
+      if(k && Math.abs(k)<R){ g.fillStyle=C.muted; let t=P([k,0]); g.textAlign='center'; g.textBaseline='top'; g.fillText(k,t[0],t[1]+5);
+             t=P([0,k]); g.textAlign='right'; g.textBaseline='middle'; g.fillText(k,t[0]-6,t[1]); } }
+    const a1=Math.abs(x[0]), a2=Math.abs(x[1]), n1=a1+a2, n2=Math.hypot(a1,a2), ni=Math.max(a1,a2);
+
+    const on={l1:$('s_l1').checked,l2:$('s_l2').checked,li:$('s_li').checked};
+    for(const k in on) $('card_'+k).classList.toggle('off',!on[k]);
+    if(n2>1e-6){
+      g.lineWidth=2; g.setLineDash([6,5]);
+      if(on.l1){ g.strokeStyle=C.l1; g.beginPath(); [[n1,0],[0,n1],[-n1,0],[0,-n1]].forEach((v,i)=>{const p=P(v); i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])}); g.closePath(); g.stroke(); }
+      if(on.l2){ g.strokeStyle=C.l2; const o=P([0,0]); g.beginPath(); g.arc(o[0],o[1],n2*sc,0,7); g.stroke(); }
+      if(on.li){ g.strokeStyle=C.li; const p=P([-ni,ni]); g.strokeRect(p[0],p[1],2*ni*sc,2*ni*sc); }
+      g.setLineDash([]);
+    }
+    const O=P([0,0]), A=P([x[0],0]), X=P(x);
+    // l-infinity: band under the longest leg
+    if(on.li){ g.strokeStyle='rgba(11,138,122,.35)'; g.lineWidth=16; g.lineCap='round'; g.beginPath();
+    if(a1>=a2){ g.moveTo(O[0],O[1]); g.lineTo(A[0],A[1]); } else { g.moveTo(A[0],A[1]); g.lineTo(X[0],X[1]); } g.stroke(); g.lineCap='butt'; }
+    // l1: the two legs
+    if(on.l1){ g.strokeStyle=C.l1; g.lineWidth=4; g.beginPath(); g.moveTo(O[0],O[1]); g.lineTo(A[0],A[1]); g.lineTo(X[0],X[1]); g.stroke(); }
+    const tags=[]; const tag=(t,px,py)=>tags.push([t,px,py,g.textAlign,g.textBaseline]);
+    g.fillStyle=C.l1; g.font='16px "Segoe UI",system-ui,sans-serif'; g.textAlign='center';
+    // l2: straight arrow
+    const ang=Math.atan2(X[1]-O[1],X[0]-O[0]), L=Math.hypot(X[0]-O[0],X[1]-O[1]);
+    if(L>4 && on.l2){ g.strokeStyle=C.l2; g.fillStyle=C.l2; g.lineWidth=4; g.beginPath(); g.moveTo(O[0],O[1]); g.lineTo(X[0]-12*Math.cos(ang),X[1]-12*Math.sin(ang)); g.stroke();
+      g.beginPath(); g.moveTo(X[0],X[1]); g.lineTo(X[0]-16*Math.cos(ang-.4),X[1]-16*Math.sin(ang-.4)); g.lineTo(X[0]-16*Math.cos(ang+.4),X[1]-16*Math.sin(ang+.4)); g.closePath(); g.fill(); }
+    g.font='16px "Segoe UI",system-ui,sans-serif';
+    for(const [t,px,py,al,bl] of tags){ g.textAlign=al; g.textBaseline=bl; const m=g.measureText(t).width, x0=al==='center'?px-m/2:al==='right'?px-m:px, y0=bl==='top'?py:bl==='bottom'?py-18:py-9;
+      g.fillStyle='rgba(255,255,255,.9)'; g.fillRect(x0-4,y0-3,m+8,24); g.fillStyle=C.l1; g.fillText(t,px,py); }
+    g.fillStyle='#fff'; g.strokeStyle=C.ink; g.lineWidth=2.5; g.beginPath(); g.arc(X[0],X[1],9,0,7); g.fill(); g.stroke();
+    g.fillStyle=C.ink; g.font='italic 20px "Cambria Math",Cambria,serif'; g.textAlign='left'; g.textBaseline='bottom'; g.fillText('x',X[0]+12,X[1]-8);
+
+    $('v1').textContent=f2(n1); $('v2').textContent=f2(n2); $('vi').textContent=f2(ni);
+    $('f1').innerHTML=`|<i>x</i>₁| + |<i>x</i>₂| = ${f2(a1)} + ${f2(a2)}`;
+    $('f2').innerHTML=`√(<i>x</i>₁² + <i>x</i>₂²) = √(${f2(a1*a1)} + ${f2(a2*a2)})`;
+    $('fi').innerHTML=`max(|<i>x</i>₁|, |<i>x</i>₂|) = max(${f2(a1)}, ${f2(a2)})`;
+  }
+
+  // ---------------- interaction
+  const cv=$('cv');
+  function toWorld(e){ const rc=cv.getBoundingClientRect(), sc=Math.min(rc.width,rc.height)/(2*R); return [(e.clientX-rc.left-rc.width/2)/sc,-(e.clientY-rc.top-rc.height/2)/sc]; }
+  function setX(e){ let m=toWorld(e).map(v=>Math.max(-R+.1,Math.min(R-.1,v))); x=m; draw2(); }
+  cv.addEventListener('pointerdown',e=>{drag='x'; cv.setPointerCapture(e.pointerId); cv.style.cursor='grabbing'; setX(e);});
+  cv.addEventListener('pointermove',e=>{ if(drag==='x') setX(e); });
+  const end=()=>{drag=null; cv.style.cursor='grab';}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+
+  ['s_l1','s_l2','s_li'].forEach(id=>$(id).addEventListener('change',draw2));
+  window.addEventListener('resize',draw2);
+  draw2();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Projection</title>
+<style>
+  :root{--ink:#14213d;--muted:#5b6478;--paper:#fbfbf8;--panel:#fff;--rule:#d9dce3;
+        --a1:#2f5d8a;--a2:#c8553d;--you:#f2a20c;--best:#0b8a7a;--bad:#c8553d}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:17px/1.45 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1280px;margin:0 auto;padding:20px 24px 28px}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 28px;margin-bottom:14px}
+  h1{font-size:30px;line-height:1.1;margin:0;font-weight:650;letter-spacing:-.01em}
+  .formula{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:22px}
+  .seg{display:flex} .seg button{border-radius:0;margin-left:-1px;min-width:64px;font-weight:650}
+  .seg button:first-child{border-radius:5px 0 0 5px;margin-left:0} .seg button:last-child{border-radius:0 5px 5px 0}
+  .grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  figure{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px}
+  .cw{position:relative;width:100%;aspect-ratio:1/1;max-height:calc(100vh - 130px);margin:0 auto}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+  #cv{cursor:grab}
+  .box{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 18px;margin-bottom:14px}
+  button{font:inherit;font-size:16px;padding:7px 14px;border-radius:5px;border:1px solid var(--ink);background:var(--panel);color:var(--ink);cursor:pointer}
+  button:hover{background:#eef0f5} button.on{background:var(--ink);color:#fff}
+  #btnReveal{background:var(--ink);color:#fff} #btnReveal:hover{background:#22325a}
+  button.tg{font-size:14px;padding:3px 12px;min-width:64px}
+  button:focus-visible,input:focus-visible{outline:3px solid var(--you);outline-offset:2px}
+  .ask{font-size:22px;line-height:1.35;margin:0 0 4px;font-weight:600}
+  .hint{font-size:16px;color:var(--muted)}
+  .slider{display:grid;grid-template-columns:44px 1fr 64px;align-items:center;gap:12px;margin:4px 0}
+  .slider label{font-family:"Cambria Math",Cambria,serif;font-style:italic;font-size:24px}
+  .slider output{font-size:21px;text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;height:28px;accent-color:var(--you)}
+  .eq{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:24px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow-x:auto;margin-bottom:4px}
+  .read{display:flex;gap:30px;flex-wrap:wrap;align-items:flex-end;font-variant-numeric:tabular-nums}
+  .read div span{display:block;font-size:14px;color:var(--muted)}
+  .read div b{font-size:36px;font-weight:650;letter-spacing:-.01em}
+  .read div.small b{font-size:22px} #bestBox b{color:var(--best)}
+  .orth{font-family:"Cambria Math",Cambria,serif;font-size:21px;margin-top:8px;font-variant-numeric:tabular-nums}
+  .note{font-size:16px;color:var(--muted);margin-top:6px;min-height:1.5em}
+  .good{color:var(--best)} .badc{color:var(--bad)}
+  .row{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:10px;align-items:center}
+  .ph{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:15px;color:var(--muted);margin-bottom:4px}
+  .pw{position:relative;width:100%;height:150px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Projection: the closest point</h1>
+    <div class="seg" id="tabs"><button data-v="2" class="on">2D</button><button data-v="3">3D</button></div>
+    <div class="formula">min<sub><i>y</i> ∈ <i>S</i></sub> ‖<i>x</i> − <i>y</i>‖</div>
+  </header>
+
+  <div class="grid">
+    <figure><div class="cw"><canvas id="cv"></canvas></div></figure>
+
+    <div>
+      <div class="box">
+        <div class="ask" id="ask"></div>
+        <div class="hint" id="hint"></div>
+      </div>
+
+      <div class="box">
+        <div class="eq" id="eq"></div>
+        <div class="slider"><label for="s1" id="l1">τ</label><input id="s1" type="range" min="-2" max="2" step="0.01" value="-0.4"><output id="o1"></output></div>
+        <div class="slider hidden" id="rowS2"><label for="s2">β₂</label><input id="s2" type="range" min="-2" max="2" step="0.01" value="-0.5"><output id="o2"></output></div>
+        <div class="row">
+          <button id="btnReveal">Reveal the projection</button>
+          <button id="btnNew" class="hidden">New x</button>
+          <button id="btnReset">Reset</button>
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="read">
+          <div><span>distance ‖<i>x</i> − <i>y</i>‖</span><b id="dist"></b></div>
+          <div id="bestBox" class="small"><span>my best so far</span><b id="best"></b></div>
+          <div class="small hidden" id="optBox"><span>smallest possible</span><b id="opt"></b></div>
+        </div>
+        <div class="orth" id="orth"></div>
+        <div class="note" id="note"></div>
+      </div>
+
+      <div class="box" id="boxPlot">
+        <div class="ph"><span>Distance as <i>y</i> moves along the line</span><button class="tg" id="tgPlot">Hide</button></div>
+        <div id="plotBody"><div class="pw"><canvas id="plot"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const C={ink:css('--ink'),muted:css('--muted'),a1:css('--a1'),a2:css('--a2'),you:css('--you'),best:css('--best'),bad:css('--bad')};
+  const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2);
+  let dim=2, drag=null, revealed=false, best=Infinity, last=null;
+
+  // 2D state
+  const R=3; let v=[2,1], x=[0.8,2.3];
+  // 3D state
+  const V0=[[1.7,0.3,0.4],[0.3,1.5,0.8]]; let u1=V0[0].slice(), u2=V0[1].slice(), x3=[0,0,0], az=-0.9, el=0.38;
+  const dot=(a,b)=>a.reduce((s,q,i)=>s+q*b[i],0), add=(a,b,s=1)=>a.map((q,i)=>q+s*b[i]), mul=(a,s)=>a.map(q=>q*s), len=a=>Math.sqrt(dot(a,a)), unit=a=>mul(a,1/(len(a)||1));
+  const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+  const setX3=(c1,c2,t)=>{ x3=add(add(mul(u1,c1),mul(u2,c2)),unit(cross(u1,u2)),t); };
+
+  // helpers on projected points
+  function lineP(g,a,b,col,wd,dash){ g.strokeStyle=col; g.lineWidth=wd; g.setLineDash(dash||[]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.stroke(); g.setLineDash([]); }
+  function arrowP(g,a,b,col,wd){ const ang=Math.atan2(b[1]-a[1],b[0]-a[0]),L=Math.hypot(b[0]-a[0],b[1]-a[1]); if(L<2) return; const hl=Math.min(14,L*.6);
+    g.strokeStyle=col; g.fillStyle=col; g.lineWidth=wd; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0]-hl*.8*Math.cos(ang),b[1]-hl*.8*Math.sin(ang)); g.stroke();
+    g.beginPath(); g.moveTo(b[0],b[1]); g.lineTo(b[0]-hl*Math.cos(ang-.4),b[1]-hl*Math.sin(ang-.4)); g.lineTo(b[0]-hl*Math.cos(ang+.4),b[1]-hl*Math.sin(ang+.4)); g.closePath(); g.fill(); }
+  function labelP(g,p,t,col,dx=10,dy=-7){ g.font='italic 22px "Cambria Math",Cambria,serif'; g.textAlign='left'; g.textBaseline='bottom'; const m=g.measureText(t).width;
+    g.fillStyle='rgba(255,255,255,.8)'; g.fillRect(p[0]+dx-3,p[1]+dy-23,m+6,24); g.fillStyle=col; g.fillText(t,p[0]+dx,p[1]+dy); }
+  function dotP(g,p,r,fill,stroke=C.ink){ g.fillStyle=fill; g.strokeStyle=stroke; g.lineWidth=2; g.beginPath(); g.arc(p[0],p[1],r,0,7); g.fill(); g.stroke(); }
+  function square(g,pts,col){ g.strokeStyle=col; g.lineWidth=2; g.beginPath(); pts.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])); g.stroke(); }
+
+  function ctx(id){ const cv=$(id), rc=cv.getBoundingClientRect(), d=window.devicePixelRatio||1; if(rc.width<2) return null;
+    cv.width=Math.round(rc.width*d); cv.height=Math.round(rc.height*d); const g=cv.getContext('2d'); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height); return {g,w:rc.width,h:rc.height}; }
+
+  function draw(){
+    const o=ctx('cv'); if(!o) return; const {g,w,h}=o;
+    $('rowS2').classList.toggle('hidden',dim===2); $('btnNew').classList.toggle('hidden',dim===2); $('boxPlot').classList.toggle('hidden',dim===3);
+    $('l1').textContent=dim===2?'τ':'β₁'; $('o1').textContent=f2(+$('s1').value); $('o2').textContent=f2(+$('s2').value);
+    $('btnReveal').textContent=revealed?'Hide the projection':'Reveal the projection'; $('optBox').classList.toggle('hidden',!revealed);
+    const r = dim===2 ? draw2(g,w,h) : draw3(g,w,h);
+    if(r.d<best) best=r.d;
+    $('dist').textContent=r.d.toFixed(2); $('best').textContent=best.toFixed(2); $('opt').textContent=r.dOpt.toFixed(2);
+    const orthOK=r.ips.every(q=>Math.abs(q[1])<0.03);
+    $('orth').innerHTML=r.ips.map(q=>`(<i>x</i> − <i>y</i>)ᵀ${q[0]} = <b class="${Math.abs(q[1])<0.03?'good':''}">${f2(q[1])}</b>`).join(' &nbsp;&nbsp; ');
+    $('note').innerHTML = orthOK ? '<span class="good">The error x − y is orthogonal to S. This y is the projection: no point of S is closer.</span>'
+      : revealed ? 'At the green point the error is perpendicular to S. Move y there and watch the inner product go to zero.'
+      : 'Make the distance as small as you can. What happens to the inner product when you get close?';
+  }
+
+  // ======================= 2D: projection onto a line =======================
+  function draw2(g,w,h){
+    const sc=Math.min(w,h)/(2*R), P=q=>[w/2+q[0]*sc,h/2-q[1]*sc], tau=+$('s1').value, y=mul(v,tau), tS=dot(x,v)/dot(v,v), xs=mul(v,tS), u=unit(v);
+    lineP(g,P(mul(u,-9)),P(mul(u,9)),'rgba(47,93,138,.25)',16);
+    for(let k=-R;k<=R;k++){ const col=k?'rgba(20,33,61,.07)':C.ink; lineP(g,P([k,-R]),P([k,R]),col,1); lineP(g,P([-R,k]),P([R,k]),col,1); }
+    { const q=P(mul(u,2.75)); g.font='italic 20px "Cambria Math",Cambria,serif'; g.fillStyle=C.a1; g.textAlign='center'; g.textBaseline='middle'; g.fillText('S',q[0]-u[1]*-18,q[1]-u[0]*-18); }
+    if(revealed){ const e=unit(add(x,xs,-1)), s=0.22; lineP(g,P(xs),P(x),C.best,3,[7,5]); square(g,[P(add(xs,u,s)),P(add(add(xs,u,s),e,s)),P(add(xs,e,s))],C.best); dotP(g,P(xs),8,C.best); labelP(g,P(xs),'x*',C.best,10,26); }
+    lineP(g,P(y),P(x),C.bad,3);
+    arrowP(g,P([0,0]),P(v),C.a1,4.5); labelP(g,P(v),'v',C.a1);
+    dotP(g,P(y),9,C.you); labelP(g,P(y),'y',C.ink,-26,-8);
+    dotP(g,P(x),9,'#fff'); labelP(g,P(x),'x',C.ink);
+    draw2.y=y; drawPlot(tau,tS);
+    $('ask').textContent='Which point y of the line S is closest to x?';
+    $('hint').textContent='Drag y along the line (or use the slider) and watch the distance. You can also drag x and v.';
+    $('eq').innerHTML=`<i>y</i> = ${f2(tau)} <i>v</i>`+(revealed?` &nbsp;&nbsp; <span class="good"><i>x</i>* = (<i>x</i>ᵀ<i>v</i> / <i>v</i>ᵀ<i>v</i>) <i>v</i> = ${f2(tS)} <i>v</i></span>`:'');
+    return {d:len(add(x,y,-1)), dOpt:len(add(x,xs,-1)), ips:[['<i>v</i>',dot(add(x,y,-1),v)]]};
+  }
+
+  function drawPlot(tau,tS){
+    if($('plotBody').classList.contains('hidden')) return; const o=ctx('plot'); if(!o) return; const {g,w,h}=o, M={l:34,r:10,t:8,b:22};
+    const f=t=>len(add(x,mul(v,t),-1)); let mx=0; for(let k=0;k<=80;k++) mx=Math.max(mx,f(-2+k/20)); mx*=1.05;
+    const X=t=>M.l+(t+2)/4*(w-M.l-M.r), Y=q=>M.t+(1-q/mx)*(h-M.t-M.b);
+    g.font='13px "Segoe UI",system-ui,sans-serif'; g.fillStyle=C.muted; g.textAlign='center'; g.textBaseline='top';
+    for(const t of [-2,-1,0,1,2]){ lineP(g,[X(t),M.t],[X(t),h-M.b],'#eceef2',1); g.fillText(t,X(t),h-M.b+4); }
+    lineP(g,[M.l,Y(0)],[w-M.r,Y(0)],C.ink,1); g.textAlign='right'; g.textBaseline='middle'; g.fillText('0',M.l-6,Y(0)); g.fillText(mx.toFixed(1),M.l-6,Y(mx/1.05));
+    g.textAlign='right'; g.textBaseline='top'; g.font='italic 15px "Cambria Math",Cambria,serif'; g.fillText('τ',w-M.r,h-M.b+3);
+    g.strokeStyle=C.bad; g.lineWidth=2.5; g.beginPath(); for(let k=0;k<=160;k++){ const t=-2+k/40; k?g.lineTo(X(t),Y(f(t))):g.moveTo(X(t),Y(f(t))); } g.stroke();
+    if(revealed && Math.abs(tS)<=2){ lineP(g,[X(tS),M.t],[X(tS),h-M.b],C.best,2,[5,4]); dotP(g,[X(tS),Y(f(tS))],5,C.best,C.best); }
+    dotP(g,[X(tau),Y(f(tau))],6,C.you);
+  }
+
+  // ======================= 3D: projection onto a plane =======================
+  function draw3(g,w,h){
+    const L=3.4, ca=Math.cos(az),sa=Math.sin(az),ce=Math.cos(el),se=Math.sin(el), s=Math.min(w,h)/(2*L*1.42), cx=w/2, cy=h/2;
+    const P=q=>{ const xr=q[0]*ca-q[1]*sa, yr=q[0]*sa+q[1]*ca; return [cx+s*xr, cy-s*(yr*se+q[2]*ce)]; }, cam=[-sa*ce,-ca*ce,se];
+    const b1=+$('s1').value, b2=+$('s2').value, y=add(mul(u1,b1),mul(u2,b2)), n=unit(cross(u1,u2));
+    const g11=dot(u1,u1),g12=dot(u1,u2),g22=dot(u2,u2),r1=dot(u1,x3),r2=dot(u2,x3),D=g11*g22-g12*g12, c1=(r1*g22-r2*g12)/D, c2=(g11*r2-g12*r1)/D, xs=add(mul(u1,c1),mul(u2,c2));
+    const front=dot(add(x3,xs,-1),n)*dot(n,cam)>=0;
+    const E=[[-L,-L,-L],[L,-L,-L],[L,L,-L],[-L,L,-L],[-L,-L,L],[L,-L,L],[L,L,L],[-L,L,L]];
+    [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]].forEach(e=>lineP(g,P(E[e[0]]),P(E[e[1]]),'#e3e5ea',1));
+    [[L,0,0],[0,L,0],[0,0,L]].forEach(q=>lineP(g,P(mul(q,-1)),P(q),C.ink,1.2));
+    const above=()=>{ lineP(g,P(y),P(x3),C.bad,3);
+      if(revealed){ lineP(g,P(xs),P(x3),C.best,3,[7,5]); const e=unit(u1), m=unit(add(x3,xs,-1)), k=0.28; square(g,[P(add(xs,e,k)),P(add(add(xs,e,k),m,k)),P(add(xs,m,k))],C.best); }
+      dotP(g,P(x3),9,'#fff'); labelP(g,P(x3),'x',C.ink); };
+    if(!front) above();
+    const K=2.1, c4=[[-K,-K],[K,-K],[K,K],[-K,K]].map(c=>P(add(mul(u1,c[0]),mul(u2,c[1]))));
+    g.fillStyle='rgba(47,93,138,.20)'; g.strokeStyle='rgba(47,93,138,.55)'; g.lineWidth=1.5; g.beginPath(); c4.forEach((q,i)=>i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1])); g.closePath(); g.fill(); g.stroke();
+    for(let k=-2;k<=2;k++){ lineP(g,P(add(mul(u1,k),mul(u2,-K))),P(add(mul(u1,k),mul(u2,K))),'rgba(200,85,61,.30)',1); lineP(g,P(add(mul(u1,-K),mul(u2,k))),P(add(mul(u1,K),mul(u2,k))),'rgba(47,93,138,.30)',1); }
+    { const q=P(add(mul(u1,-1.75),mul(u2,1.75))); g.font='italic 20px "Cambria Math",Cambria,serif'; g.fillStyle=C.a1; g.textAlign='center'; g.textBaseline='middle'; g.fillText('S',q[0],q[1]); }
+    arrowP(g,P([0,0,0]),P(u1),C.a1,4.5); labelP(g,P(u1),'a₁',C.a1); arrowP(g,P([0,0,0]),P(u2),C.a2,4.5); labelP(g,P(u2),'a₂',C.a2);
+    if(revealed){ dotP(g,P(xs),8,C.best); labelP(g,P(xs),'x*',C.best,10,26); }
+    dotP(g,P(y),9,C.you); labelP(g,P(y),'y',C.ink,-26,-8);
+    if(front) above();
+    $('ask').textContent='Which point y of the plane S is closest to x?';
+    $('hint').textContent='Move y inside the plane with β₁ and β₂ and watch the distance. Drag the picture to rotate.';
+    $('eq').innerHTML=`<i>y</i> = ${f2(b1)} <i>a</i>₁ ${b2<0?'−':'+'} ${f2(Math.abs(b2))} <i>a</i>₂`+(revealed?` &nbsp;&nbsp; <span class="good"><i>x</i>* = ${f2(c1)} <i>a</i>₁ ${c2<0?'−':'+'} ${f2(Math.abs(c2))} <i>a</i>₂</span>`:'');
+    const e=add(x3,y,-1); return {d:len(e), dOpt:len(add(x3,xs,-1)), ips:[['<i>a</i>₁',dot(e,u1)],['<i>a</i>₂',dot(e,u2)]]};
+  }
+
+  // ---------- interaction
+  const cv=$('cv');
+  function toWorld(e){ const rc=cv.getBoundingClientRect(), sc=Math.min(rc.width,rc.height)/(2*R); return [(e.clientX-rc.left-rc.width/2)/sc,-(e.clientY-rc.top-rc.height/2)/sc]; }
+  cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); cv.style.cursor='grabbing';
+    if(dim===3){ last=[e.clientX,e.clientY]; return; }
+    const m=toWorld(e), d=q=>Math.hypot(m[0]-q[0],m[1]-q[1]), c=[['y',d(draw2.y)-0.05],['x',d(x)],['v',d(v)]].sort((p,q)=>p[1]-q[1]); if(c[0][1]<0.55) drag=c[0][0]; });
+  cv.addEventListener('pointermove',e=>{
+    if(dim===3){ if(!last) return; az-=(e.clientX-last[0])*0.01; el=Math.min(1.5,Math.max(-0.3,el+(e.clientY-last[1])*0.01)); last=[e.clientX,e.clientY]; draw(); return; }
+    if(!drag) return; const m=toWorld(e).map(q=>Math.max(-R+.05,Math.min(R-.05,q)));
+    if(drag==='y') $('s1').value=Math.max(-2,Math.min(2,dot(m,v)/dot(v,v)));
+    if(drag==='x'){ x=m; best=Infinity; } if(drag==='v'&&Math.hypot(...m)>.3){ v=m; best=Infinity; } draw(); });
+  const end=()=>{drag=null; last=null; cv.style.cursor='grab';}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+
+  function reset(){ revealed=false; best=Infinity; v=[2,1]; x=[0.8,2.3]; u1=V0[0].slice(); u2=V0[1].slice(); setX3(0.9,0.7,1.7); az=-0.9; el=0.38; $('s1').value=-0.4; $('s2').value=-0.5; draw(); }
+  document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{ dim=+b.dataset.v; revealed=false; best=Infinity; document.querySelectorAll('#tabs button').forEach(q=>q.classList.toggle('on',q===b)); $('s1').value=-0.4; $('s2').value=-0.5; draw(); });
+  ['s1','s2'].forEach(id=>$(id).addEventListener('input',draw));
+  $('btnReveal').onclick=()=>{ revealed=!revealed; draw(); };
+  $('btnNew').onclick=()=>{ const r=()=>Math.random()*2-1; setX3(1.4*r(),1.4*r(),(Math.random()<.5?-1:1)*(0.9+Math.random()*1.1)); revealed=false; best=Infinity; draw(); };
+  $('btnReset').onclick=reset;
+  $('tgPlot').onclick=()=>{ const hid=$('plotBody').classList.toggle('hidden'); $('tgPlot').textContent=hid?'Show':'Hide'; draw(); };
+  window.addEventListener('resize',draw);
+  reset();
+})();
+</script>
+</body>
+</html>

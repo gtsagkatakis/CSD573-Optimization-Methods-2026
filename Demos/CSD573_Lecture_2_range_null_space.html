@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Range and nullspace of a matrix — CS-573 demo</title>
+<style>
+  :root{
+    --bg:#fbfbf9; --ink:#1d1f24; --muted:#6b6f78; --rule:#dcdcd6;
+    --plane:#3b7dd8; --planefill:rgba(59,125,216,.16);
+    --null:#d23c3c; --nullfill:rgba(210,60,60,.14);
+    --v1:#1f5fbf; --v2:#2a9d5c; --v3:#8a4fc9; --pt:#e8801a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px;display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+  header h1{font-size:22px;font-weight:600;margin:0}
+  header span{color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:8px 24px 24px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  #stage{position:relative;background:#fff;border:1px solid var(--rule);border-radius:6px;min-height:520px}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;border-radius:6px}
+  canvas:active{cursor:grabbing}
+  #hint{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);pointer-events:none}
+  #legend{position:absolute;right:12px;top:10px;font-size:13px;line-height:1.6;background:rgba(255,255,255,.85);
+    padding:6px 10px;border-radius:4px;border:1px solid var(--rule)}
+  #legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:7px;border-radius:2px}
+  aside{display:flex;flex-direction:column;gap:14px}
+  section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
+  section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+  .toggle{display:flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+  .toggle button{flex:1;padding:8px 6px;border:0;background:#fff;font:inherit;font-size:14px;cursor:pointer}
+  .toggle button.on{background:var(--ink);color:#fff}
+  .toggle button:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--pt);outline-offset:1px}
+  .mat{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0 8px}
+  .mat input{width:100%;padding:6px 4px;text-align:center;font:inherit;font-size:15px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  .mat input:nth-child(3n+1){border-bottom:3px solid var(--v1)}
+  .mat input:nth-child(3n+2){border-bottom:3px solid var(--v2)}
+  .mat input:nth-child(3n){border-bottom:3px solid var(--v3)}
+  .mat.rows input:nth-child(-n+3){border-bottom:3px solid var(--v1)}
+  .mat.rows input:nth-child(n+4):nth-child(-n+6){border-bottom:3px solid var(--v2)}
+  .mat.rows input:nth-child(n+7){border-bottom:3px solid var(--v3)}
+  select{width:100%;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  .sl{display:grid;grid-template-columns:34px 1fr 52px;align-items:center;gap:8px;margin:4px 0}
+  .sl input[type=range]{width:100%}
+  .sl output{font-variant-numeric:tabular-nums;font-size:14px;text-align:right}
+  .row{display:flex;gap:8px;margin-top:8px}
+  .row button{flex:1;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff;cursor:pointer}
+  .row button:hover{background:#f3f3ef}
+  .row button.mode.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  #read{font-size:14px}
+  #read table{border-collapse:collapse;width:100%}
+  #read td{padding:3px 0;vertical-align:top}
+  #explain{font-size:14px} #explain p{margin:0 0 8px} #explain p:last-child{margin:0}
+  #read td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  #rank{font-size:30px;font-weight:600;line-height:1.1}
+  .note{font-size:13px;color:var(--muted);margin-top:6px}
+  .ok{color:#2a9d5c;font-weight:600} .bad{color:var(--null);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Range and nullspace of a 3×3 matrix</h1>
+  <span>CS-573 Optimization Methods · Lecture 2 · drag to rotate</span>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="legend"></div>
+    <div id="hint">Arrows are the rows of A. Blue: row space R(Aᵀ). Red: nullspace N(A), the x's with Ax = 0.</div>
+  </div>
+  <aside>
+    <section>
+      <h2>Matrix A</h2>
+      <select id="preset">
+        <optgroup label="Rank 0"><option value="zero">Zero matrix</option></optgroup>
+        <optgroup label="Rank 1"><option value="outer">Outer product u vᵀ</option></optgroup>
+        <optgroup label="Rank 2">
+          <option value="sum" selected>Third column = first + second</option>
+          <option value="par">Two parallel columns</option>
+          <option value="proj">Projection onto the xy-plane</option>
+        </optgroup>
+        <optgroup label="Rank 3"><option value="full">Full rank (invertible)</option></optgroup>
+      </select>
+      <div class="mat rows" id="mat"></div>
+      <div class="note" id="matNote"></div>
+    </section>
+    <section>
+      <h2>Input vector x</h2>
+      <div class="sl"><label for="x1">x₁</label><input type="range" id="x1" min="-2" max="2" step="0.05" value="1"><output id="o1"></output></div>
+      <div class="sl"><label for="x2">x₂</label><input type="range" id="x2" min="-2" max="2" step="0.05" value="0.5"><output id="o2"></output></div>
+      <div class="sl"><label for="x3">x₃</label><input type="range" id="x3" min="-2" max="2" step="0.05" value="-0.5"><output id="o3"></output></div>
+      <div class="row">
+        <button id="mVec" class="mode">Show vector</button>
+        <button id="mRange" class="mode on">Project on range space</button>
+        <button id="mNull" class="mode">Projection in null space</button>
+      </div>
+    </section>
+    <section id="read"></section>
+  </aside>
+</main>
+
+<script>
+(() => {
+/* ---------- small linear algebra (3×3) ---------- */
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const norm=a=>Math.sqrt(dot(a,a));
+const scale=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const matvec=(A,x)=>[dot(A[0],x),dot(A[1],x),dot(A[2],x)];
+const transpose=A=>[[A[0][0],A[1][0],A[2][0]],[A[0][1],A[1][1],A[2][1]],[A[0][2],A[1][2],A[2][2]]];
+const col=(A,j)=>[A[0][j],A[1][j],A[2][j]];
+
+// Jacobi eigen-decomposition of a symmetric 3×3: returns {vals, vecs(columns)}
+function jacobi(S){
+  const a=S.map(r=>r.slice()); const V=[[1,0,0],[0,1,0],[0,0,1]];
+  for(let it=0;it<60;it++){
+    let p=0,q=1,m=Math.abs(a[0][1]);
+    if(Math.abs(a[0][2])>m){p=0;q=2;m=Math.abs(a[0][2]);}
+    if(Math.abs(a[1][2])>m){p=1;q=2;m=Math.abs(a[1][2]);}
+    if(m<1e-14)break;
+    const th=0.5*Math.atan2(2*a[p][q],a[q][q]-a[p][p]);
+    const c=Math.cos(th),s=Math.sin(th);
+    for(let k=0;k<3;k++){
+      const akp=a[k][p],akq=a[k][q];
+      a[k][p]=c*akp-s*akq; a[k][q]=s*akp+c*akq;
+    }
+    for(let k=0;k<3;k++){
+      const apk=a[p][k],aqk=a[q][k];
+      a[p][k]=c*apk-s*aqk; a[q][k]=s*apk+c*aqk;
+    }
+    for(let k=0;k<3;k++){
+      const vkp=V[k][p],vkq=V[k][q];
+      V[k][p]=c*vkp-s*vkq; V[k][q]=s*vkp+c*vkq;
+    }
+  }
+  return {vals:[a[0][0],a[1][1],a[2][2]], vecs:V};
+}
+// complete an orthonormal set to a full basis of R^3
+function complete(basis){
+  const out=basis.map(v=>v.slice());
+  const cands=[[1,0,0],[0,1,0],[0,0,1]];
+  for(const c of cands){
+    if(out.length===3)break;
+    let v=c.slice();
+    for(const b of out)v=sub(v,scale(b,dot(v,b)));
+    const n=norm(v); if(n>1e-6)out.push(scale(v,1/n));
+  }
+  return out;
+}
+// SVD of 3×3 via A^T A. Returns sigma (desc), U cols, V cols, rank.
+function svd(A){
+  const At=transpose(A);
+  const S=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++)for(let k=0;k<3;k++)S[i][j]+=At[i][k]*A[k][j];
+  const e=jacobi(S);
+  const order=[0,1,2].sort((i,j)=>e.vals[j]-e.vals[i]);
+  const sig=order.map(i=>Math.sqrt(Math.max(e.vals[i],0)));
+  const V=order.map(i=>[e.vecs[0][i],e.vecs[1][i],e.vecs[2][i]]);
+  const tol=1e-7*Math.max(1,sig[0]);
+  const r=sig.filter(s=>s>tol).length;
+  let U=[];
+  for(let i=0;i<r;i++)U.push(scale(matvec(A,V[i]),1/sig[i]));
+  U=complete(U);
+  return {sig,U,V,rank:r};
+}
+
+/* ---------- state ---------- */
+const presets={
+  full:[[2,0,1],[0,1,1],[1,1,2]],
+  sum:[[1,0,1],[0,1,1],[1,1,2]],
+  par:[[1,2,0],[2,4,0],[0,0,1]],
+  outer:[[1,-1,2],[2,-2,4],[1,-1,2]],
+  proj:[[1,0,0],[0,1,0],[0,0,0]],
+  zero:[[0,0,0],[0,0,0],[0,0,0]],
+};
+let A=presets.sum.map(r=>r.slice());
+const view='in';
+let x=[1,0.5,-0.5];
+let yaw=-0.65,pitch=0.5;
+let dec=svd(A);
+
+/* ---------- DOM ---------- */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const matEl=document.getElementById('mat');
+const inputs=[];
+for(let i=0;i<3;i++)for(let j=0;j<3;j++){
+  const inp=document.createElement('input');
+  inp.type='number';inp.step='0.5';inp.value=A[i][j];
+  inp.setAttribute('aria-label',`a${i+1}${j+1}`);
+  inp.addEventListener('input',()=>{
+    const v=parseFloat(inp.value);A[i][j]=isNaN(v)?0:v;
+    document.getElementById('preset').value='';
+    recompute();
+  });
+  matEl.appendChild(inp);inputs.push(inp);
+}
+function loadMatrix(){inputs.forEach((inp,k)=>inp.value=A[Math.floor(k/3)][k%3]);}
+document.getElementById('preset').addEventListener('change',e=>{
+  if(!presets[e.target.value])return;
+  A=presets[e.target.value].map(r=>r.slice());loadMatrix();recompute();align();
+});
+['x1','x2','x3'].forEach((id,k)=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',()=>{x[k]=parseFloat(el.value);update();});
+});
+function setView(){update();align();}
+function setX(v){x=v.slice();['x1','x2','x3'].forEach((id,k)=>document.getElementById(id).value=x[k]);update();}
+let mode='range';
+[['mVec','vec'],['mRange','range'],['mNull','null']].forEach(([id,m])=>{
+  document.getElementById(id).onclick=()=>{mode=m;document.querySelectorAll('.mode').forEach(b=>b.classList.toggle('on',b.id===id));update();};
+});
+function projRow(){let pr=[0,0,0];dec.V.slice(0,dec.rank).forEach(b=>pr=add(pr,scale(b,dot(x,b))));return pr;}
+function recompute(){dec=svd(A);update();}
+// camera aligned to the dimension of the subspace: 1-D → look across the line, 2-D → look down its normal, 3-D → default
+function lookAlong(n,tilt){
+  yaw=Math.atan2(n[0],n[1]);
+  pitch=Math.atan2(-n[2],Math.hypot(n[0],n[1]))+tilt;
+}
+function align(){
+  const r=dec.rank,out=view==='out';
+  const B=out?dec.U:dec.V;
+  // orient the normal so that the current x sits on the "up" side, then tilt the camera so the plane is seen obliquely
+  if(r===2){let n=B[2];if(dot(x,n)<0)n=scale(n,-1);lookAlong(n,0.6);}
+  else if(r===1){let n=B[1];if(dot(x,n)<0)n=scale(n,-1);lookAlong(n,0.6);}
+  else{yaw=-0.65;pitch=0.5;}
+  draw();
+}
+
+
+/* ---------- rotation by drag ---------- */
+let drag=null;
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  yaw+=(e.clientX-drag.x)*0.008; pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-drag.y)*0.008));
+  drag={x:e.clientX,y:e.clientY};draw();
+});
+cv.addEventListener('pointerup',()=>drag=null);
+cv.addEventListener('pointercancel',()=>drag=null);
+
+/* ---------- projection ---------- */
+let W=0,H=0,SC=1;
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  W=r.width;H=Math.max(520,r.height);
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  SC=Math.min(W,H)/9;
+  draw();
+}
+window.addEventListener('resize',resize);
+function proj(p){ // z up; rotate yaw about z, pitch about x; orthographic
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const x1=p[0]*cy-p[1]*sy, y1=p[0]*sy+p[1]*cy, z1=p[2];
+  const y2=y1*cp-z1*sp, z2=y1*sp+z1*cp;
+  return [W/2+x1*SC, H/2-z2*SC, y2];
+}
+
+/* ---------- drawing ---------- */
+function line(a,b,color,w,dash){
+  const p=proj(a),q=proj(b);
+  ctx.strokeStyle=color;ctx.lineWidth=w;ctx.setLineDash(dash||[]);
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.setLineDash([]);
+}
+function arrow(v,color,label){
+  const n=norm(v); if(n<1e-9)return;
+  const o=proj([0,0,0]),t=proj(v);
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(t[0],t[1]);ctx.stroke();
+  const ang=Math.atan2(t[1]-o[1],t[0]-o[0]);
+  ctx.beginPath();ctx.moveTo(t[0],t[1]);
+  ctx.lineTo(t[0]-12*Math.cos(ang-0.4),t[1]-12*Math.sin(ang-0.4));
+  ctx.lineTo(t[0]-12*Math.cos(ang+0.4),t[1]-12*Math.sin(ang+0.4));
+  ctx.closePath();ctx.fill();
+  ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+  ctx.fillText(label,t[0]+8,t[1]-6);
+}
+function quad(u,v,L,fill,stroke){
+  const pts=[[1,1],[1,-1],[-1,-1],[-1,1]].map(([s,t])=>proj(add(scale(u,s*L),scale(v,t*L))));
+  ctx.fillStyle=fill;ctx.strokeStyle=stroke;ctx.lineWidth=1.2;
+  ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fill();ctx.stroke();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const r=dec.rank;
+  const out=view==='out';
+  const sub=out?dec.U.slice(0,r):dec.V.slice(0,r);   // R(A) or R(Aᵀ)
+  const nul=out?dec.U.slice(r):dec.V.slice(r);       // N(Aᵀ) or N(A)
+  const L=3.2;
+  ctx.font='12px Segoe UI,Roboto,sans-serif';
+
+  // reference frame adapted to the dimension of the subspace
+  if(r===3||r===0){
+    for(let i=-3;i<=3;i++){line([i,-3,0],[i,3,0],'#ececea',1);line([-3,i,0],[3,i,0],'#ececea',1);}
+    line([-3.4,0,0],[3.4,0,0],'#b9b9b2',1.2);line([0,-3.4,0],[0,3.4,0],'#b9b9b2',1.2);line([0,0,-3.4],[0,0,3.4],'#b9b9b2',1.2);
+    ctx.fillStyle='#9a9a94';
+    [[3.6,0,0,'e₁'],[0,3.6,0,'e₂'],[0,0,3.6,'e₃']].forEach(([a,b,c,l])=>{const p=proj([a,b,c]);ctx.fillText(l,p[0]-4,p[1]+4);});
+  }else if(r===2){
+    // 2-D grid drawn inside the subspace itself
+    const [u,v]=sub;
+    for(let i=-3;i<=3;i++){
+      line(add(scale(u,i),scale(v,-3)),add(scale(u,i),scale(v,3)),'#dfe8f5',1);
+      line(add(scale(u,-3),scale(v,i)),add(scale(u,3),scale(v,i)),'#dfe8f5',1);
+    }
+    line(scale(u,-3.4),scale(u,3.4),'#9db6dc',1.2);line(scale(v,-3.4),scale(v,3.4),'#9db6dc',1.2);
+    // the standard axes stay as thin dashed guides
+    line([-3,0,0],[3,0,0],'#d6d6d0',1,[2,4]);line([0,-3,0],[0,3,0],'#d6d6d0',1,[2,4]);line([0,0,-3],[0,0,3],'#d6d6d0',1,[2,4]);
+  }else{
+    // 1-D: a number line with ticks along the subspace
+    const u=sub[0];
+    const w=complete([u])[1];
+    for(let i=-3;i<=3;i++){const p=scale(u,i);line(add(p,scale(w,-0.08)),add(p,scale(w,0.08)),'#9db6dc',1.5);}
+    line([-3,0,0],[3,0,0],'#d6d6d0',1,[2,4]);line([0,-3,0],[0,3,0],'#d6d6d0',1,[2,4]);line([0,0,-3],[0,0,3],'#d6d6d0',1,[2,4]);
+  }
+  // subspace (blue)
+  if(r===2)quad(sub[0],sub[1],L,'rgba(59,125,216,.16)','#3b7dd8');
+  if(r===1)line(scale(sub[0],-L),scale(sub[0],L),'#3b7dd8',3);
+  // complement (red)
+  if(nul.length===1)line(scale(nul[0],-L),scale(nul[0],L),'#d23c3c',2.5,[7,5]);
+  if(nul.length===2)quad(nul[0],nul[1],L,'rgba(210,60,60,.14)','#d23c3c');
+
+  // vectors: columns (output) or rows (input)
+  const vecs=out?[col(A,0),col(A,1),col(A,2)]:[A[0],A[1],A[2]];
+  const names=out?['a₁','a₂','a₃']:['row 1','row 2','row 3'];
+  const cols=['#1f5fbf','#2a9d5c','#8a4fc9'];
+  vecs.forEach((v,i)=>arrow(v,cols[i],names[i]));
+
+  // projection of x onto the row space
+  if(mode!=='vec'){
+    let pr=[0,0,0];sub.forEach(b=>pr=add(pr,scale(b,dot(x,b))));
+    const target=mode==='range'?pr:[x[0]-pr[0],x[1]-pr[1],x[2]-pr[2]];
+    const color=mode==='range'?'#3b7dd8':'#d23c3c';
+    const qp=proj(target);
+    line(x,target,'#555',1.5,[5,5]);
+    line([0,0,0],target,color,2);
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(qp[0],qp[1],6,0,6.283);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#1d1f24';ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+    ctx.fillText(mode==='range'?'Π x':'x − Π x',qp[0]+9,qp[1]+5);
+  }
+  // the moving point
+  const p=x;
+  const q=proj(p);
+  line([0,0,0],p,'#e8801a',1.5,[3,4]);
+  ctx.fillStyle='#e8801a';ctx.beginPath();ctx.arc(q[0],q[1],6,0,6.283);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#1d1f24';ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+  ctx.fillText('x',q[0]+9,q[1]+5);
+}
+
+/* ---------- readout ---------- */
+const f=v=>(Math.abs(v)<5e-4?0:v).toFixed(2);
+const vec=v=>`(${v.map(f).join(', ')})`;
+function update(){
+  ['o1','o2','o3'].forEach((id,k)=>document.getElementById(id).value=f(x[k]));
+  const r=dec.rank,out=view==='out';
+  const Ax=matvec(A,x);
+  const subName=out?'R(A) = column space':'R(Aᵀ) = row space';
+  const nulName=out?'N(Aᵀ) = left nullspace':'N(A) = nullspace';
+  const dims=['a point (only the origin)','a line','a plane','all of ℝ³'];
+  document.getElementById('legend').innerHTML=
+    `<div><i style="background:#3b7dd8"></i>${subName}: ${dims[r]}</div>
+     <div><i style="background:#d23c3c"></i>${nulName}: ${dims[3-r]}</div>
+     <div><i style="background:#e8801a"></i>x (input)</div>`;
+  document.getElementById('matNote').textContent='Colored underlines mark the three rows.';
+
+  let orth='';
+  if(r>0&&r<3){
+    const n=out?dec.U[r]:dec.V[r];
+    const tgt=out?Ax:x;
+    const d=dot(tgt,n);
+    orth=out
+      ?`<tr><td>Ax · n, with n ∈ N(Aᵀ)</td><td class="${Math.abs(d)<1e-6?'ok':'bad'}">${f(d)}</td></tr>`
+      :`<tr><td>‖Ax‖ (how far x is from N(A))</td><td>${f(norm(Ax))}</td></tr>`;
+  }
+  document.getElementById('read').innerHTML=`
+    <h2>Readout</h2>
+    <div id="rank">rank(A) = ${r}</div>
+    <table>
+      <tr><td>dim R(A) = dim R(Aᵀ)</td><td>${r}</td></tr>
+      <tr><td>dim N(A) = dim N(Aᵀ)</td><td>${3-r}</td></tr>
+      <tr><td>x</td><td>${vec(x)}</td></tr>
+      <tr><td>Ax</td><td>${vec(Ax)}</td></tr>
+      ${orth}
+    </table>
+    <div class="note">${r===3?'':
+      r===0?'Everything maps to the origin; the nullspace is the whole input space.':
+      `Rank–nullity: ${r} + ${3-r} = 3. Try to find an x that pushes Ax off the blue set — it cannot be done.`}</div>`;
+  draw();
+}
+
+loadMatrix();resize();setView();
+})();
+</script>
+</body>
+</html>
