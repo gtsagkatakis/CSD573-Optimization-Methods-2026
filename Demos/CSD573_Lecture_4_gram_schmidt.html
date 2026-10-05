@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gram–Schmidt orthogonalization — CS-573 demo</title>
+<style>
+  :root{
+    --bg:#fbfbf9; --ink:#1d1f24; --muted:#6b6f78; --rule:#dcdcd6;
+    --plane:#3b7dd8; --null:#d23c3c;
+    --v1:#1f5fbf; --v2:#2a9d5c; --v3:#8a4fc9; --pt:#e8801a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px;display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+  header h1{font-size:22px;font-weight:600;margin:0}
+  header span{color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:8px 24px 24px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  #stage{position:relative;background:#fff;border:1px solid var(--rule);border-radius:6px;min-height:520px}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;border-radius:6px}
+  canvas:active{cursor:grabbing}
+  #eq{position:absolute;left:14px;top:12px;right:14px;font-size:17px;font-variant-numeric:tabular-nums;pointer-events:none;line-height:1.5}
+  #eq b{font-weight:600}
+  .row+.row{margin-top:8px}
+  .row button:disabled{color:#c4c4bd;cursor:default;background:#fff}
+  .row button.nav{flex:0 0 44px}
+  #hint{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);pointer-events:none}
+  aside{display:flex;flex-direction:column;gap:14px}
+  section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
+  section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+  .toggle{display:flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;margin-bottom:8px}
+  .toggle button{flex:1;padding:7px 6px;border:0;background:#fff;font:inherit;font-size:14px;cursor:pointer}
+  .toggle button.on{background:var(--ink);color:#fff}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--pt);outline-offset:1px}
+  .mat{display:grid;gap:6px;margin:8px 0 2px}
+  .mat input{width:100%;padding:6px 4px;text-align:center;font:inherit;font-size:15px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  select{width:100%;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  .row{display:flex;gap:8px}
+  .row button{flex:1;padding:7px 4px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff;cursor:pointer}
+  .row button:hover{background:#f3f3ef}
+  .row button.mode.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .qr{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .qr table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+  .qr td{padding:3px 2px;text-align:right}
+  .qr td.e{color:#c4c4bd;text-align:center}
+  .qr .lab{font-size:13px;color:var(--muted);margin-bottom:2px}
+  #read{font-size:14px}
+  #read table{border-collapse:collapse;width:100%}
+  #read td{padding:3px 0;vertical-align:top}
+  #read td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  #big{font-size:26px;font-weight:600;line-height:1.15;margin-bottom:4px}
+  .ok{color:#2a9d5c;font-weight:600} .bad{color:var(--null);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Gram–Schmidt orthogonalization</h1>
+  <span id="sub">CS-573 Optimization Methods · Lecture 4 · drag the arrow tips</span>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="eq"></div>
+    <div id="hint">Blue: span of the previous q's and the projection onto it. Orange: q̃ᵢ. Grey circle: unit length.</div>
+  </div>
+  <aside>
+    <section>
+      <h2>Vectors a₁, a₂, a₃ (columns of A)</h2>
+      <div class="toggle"><button id="d2" class="on">2D</button><button id="d3">3D</button></div>
+      <select id="preset"></select>
+      <div class="mat" id="mat"></div>
+    </section>
+    <section>
+      <h2>Step</h2>
+      <div class="row" id="modes"></div>
+      <div class="row" id="stages"></div>
+      <div class="row"><button id="prev" class="nav" aria-label="previous">◀</button><button id="next" class="nav" aria-label="next">▶</button></div>
+    </section>
+    <section>
+      <h2>A = QR</h2>
+      <div class="qr">
+        <div><div class="lab">Q</div><table id="Q"></table></div>
+        <div><div class="lab">R</div><table id="R"></table></div>
+      </div>
+    </section>
+    <section id="read"></section>
+  </aside>
+</main>
+
+<script>
+(() => {
+/*MATH-BEGIN*/
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const norm=a=>Math.sqrt(dot(a,a));
+const scale=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+// classical Gram–Schmidt on the first n vectors; stops at the first dependent one
+function gs(cols,n){
+  const Q=[],info=[],R=[];
+  for(let i=0;i<n;i++)R.push(new Array(n).fill(null));
+  const big=Math.max(1e-12,...cols.slice(0,n).map(norm));
+  let stop=null;
+  for(let i=0;i<n;i++){
+    const a=cols[i];
+    const comps=Q.map(q=>dot(q,a));
+    let p=[0,0,0]; comps.forEach((c,j)=>p=add(p,scale(Q[j],c)));
+    const qt=sub(a,p), nr=norm(qt);
+    info.push({comps,p,qt,nr});
+    if(nr<1e-7*big){stop=i;break;}
+    Q.push(scale(qt,1/nr));
+    for(let j=0;j<n;j++)R[j][i]=j<i?comps[j]:(j===i?nr:0);
+  }
+  return {Q,R,info,stop};
+}
+// Frobenius norm of Q R − A over the first k columns
+function resid(cols,g,k,n){
+  let s=0;
+  for(let i=0;i<k;i++){
+    let v=[0,0,0];
+    for(let j=0;j<=i;j++)v=add(v,scale(g.Q[j],g.R[j][i]));
+    const d=sub(v,cols[i]); s+=dot(d,d);
+  }
+  return Math.sqrt(s);
+}
+const presets={
+  2:[
+    ['Dependent',[['par','Parallel vectors',[[2,1,0],[-1,-0.5,0]]]]],
+    ['Independent',[
+      ['gen','General',[[2,0.5,0],[1,1.5,0]]],
+      ['orth','Already orthogonal',[[1,1,0],[-1.5,1.5,0]]],
+      ['near','Almost parallel',[[2,1,0],[2,1.1,0]]]]]
+  ],
+  3:[
+    ['Dependent',[
+      ['par','Two parallel vectors',[[1,2,0],[2,4,0],[0,0,1]]],
+      ['sum','Third = first + second',[[1,0,1],[0,1,1],[1,1,2]]]]],
+    ['Independent',[
+      ['gen','General',[[2,0,0.5],[1,2,0],[0.5,0.5,2]]],
+      ['orth','Already orthogonal',[[1,1,0],[-1,1,0],[0,0,2]]],
+      ['near','Almost dependent',[[1,0,1],[0,1,1],[1,1,2.1]]]]]
+  ]
+};
+/*MATH-END*/
+
+/* ---------- state ---------- */
+let dim=2, step=0, stage=0;   // stage: 0 project, 1 subtract, 2 normalize
+let cols=[[2,0.5,0],[1,1.5,0],[0,0,1]];
+let g=gs(cols,dim);
+let yaw=-0.65,pitch=0.5;
+const C=['#1f5fbf','#2a9d5c','#8a4fc9'];
+const SUBS=['₁','₂','₃'];
+const $=id=>document.getElementById(id);
+const cv=$('c'),ctx=cv.getContext('2d');
+
+/* ---------- controls ---------- */
+let inputs=[];
+function buildMat(){
+  const el=$('mat'); el.innerHTML=''; inputs=[];
+  el.style.gridTemplateColumns=`repeat(${dim},1fr)`;
+  for(let i=0;i<dim;i++)for(let j=0;j<dim;j++){
+    const inp=document.createElement('input');
+    inp.type='number';inp.step='0.1';inp.value=cols[j][i];
+    inp.style.borderBottom='3px solid '+C[j];
+    inp.setAttribute('aria-label',`component ${i+1} of a${j+1}`);
+    inp.addEventListener('input',()=>{
+      const v=parseFloat(inp.value);cols[j][i]=isNaN(v)?0:v;
+      $('preset').value='';recompute();
+    });
+    el.appendChild(inp);inputs.push({inp,i,j});
+  }
+}
+function loadMat(){inputs.forEach(({inp,i,j})=>inp.value=+cols[j][i].toFixed(2));}
+function buildPresets(sel){
+  const el=$('preset'); el.innerHTML='';
+  presets[dim].forEach(([grp,items])=>{
+    const og=document.createElement('optgroup');og.label=grp;
+    items.forEach(([k,label])=>{const o=document.createElement('option');o.value=k;o.textContent=label;og.appendChild(o);});
+    el.appendChild(og);
+  });
+  el.value=sel;
+}
+function applyPreset(k){
+  for(const [,items] of presets[dim])for(const [key,,vs] of items)if(key===k){
+    vs.forEach((v,j)=>cols[j]=v.slice());
+    if(dim===2)cols[2]=[0,0,1];
+  }
+}
+function buildModes(){
+  const el=$('modes'); el.innerHTML='';
+  const names=['Inputs'];for(let i=1;i<=dim;i++)names.push('Step '+i);
+  names.forEach((nm,k)=>{
+    const b=document.createElement('button');b.className='mode';b.textContent=nm;
+    b.onclick=()=>{step=k;stage=0;update();};
+    el.appendChild(b);
+  });
+  const st=$('stages'); st.innerHTML='';
+  ['Project','Subtract','Normalize'].forEach((nm,k)=>{
+    const b=document.createElement('button');b.className='mode';b.textContent=nm;
+    b.onclick=()=>{stage=k;update();};
+    st.appendChild(b);
+  });
+}
+function syncModes(){
+  [...$('modes').children].forEach((c,m)=>c.classList.toggle('on',m===step));
+  [...$('stages').children].forEach((c,m)=>{c.disabled=step===0;c.classList.toggle('on',step>0&&m===stage);});
+}
+function go(d){
+  let pos=step===0?0:1+(step-1)*3+stage;
+  pos=Math.max(0,Math.min(dim*3,pos+d));
+  if(pos===0){step=0;stage=0;}else{step=1+Math.floor((pos-1)/3);stage=(pos-1)%3;}
+  update();
+}
+$('prev').onclick=()=>go(-1);
+$('next').onclick=()=>go(1);
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+  if(e.key==='ArrowRight')go(1); else if(e.key==='ArrowLeft')go(-1);
+});
+function setDim(d){
+  dim=d; step=0; stage=0;
+  $('d2').classList.toggle('on',d===2);$('d3').classList.toggle('on',d===3);
+  $('sub').textContent='CS-573 Optimization Methods · Lecture 4 · '+(d===2?'drag the arrow tips':'drag to rotate');
+  buildPresets('gen');applyPreset('gen');buildMat();buildModes();
+  yaw=-0.65;pitch=0.5;
+  resize();recompute();
+}
+$('d2').onclick=()=>setDim(2);
+$('d3').onclick=()=>setDim(3);
+$('preset').addEventListener('change',e=>{
+  if(!e.target.value)return;
+  applyPreset(e.target.value);loadMat();yaw=-0.65;pitch=0.5;recompute();
+});
+function recompute(){g=gs(cols,dim);update();}
+
+/* ---------- pointer: drag tips in 2D, rotate in 3D ---------- */
+let drag=null;
+function pos(e){const r=cv.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
+cv.addEventListener('pointerdown',e=>{
+  cv.setPointerCapture(e.pointerId);
+  if(dim===3){drag={rot:true,x:e.clientX,y:e.clientY};return;}
+  const [mx,my]=pos(e); let best=-1,bd=18;
+  for(let j=0;j<2;j++){const t=proj(cols[j]);const d=Math.hypot(t[0]-mx,t[1]-my);if(d<bd){bd=d;best=j;}}
+  drag=best>=0?{vec:best}:null;
+});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  if(drag.rot){
+    yaw+=(e.clientX-drag.x)*0.008; pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-drag.y)*0.008));
+    drag.x=e.clientX;drag.y=e.clientY;draw();return;
+  }
+  const [mx,my]=pos(e);
+  const r=v=>Math.max(-3,Math.min(3,Math.round(v*20)/20));
+  cols[drag.vec]=[r((mx-W/2)/SC),r((H/2-my)/SC),0];
+  $('preset').value='';loadMat();recompute();
+});
+cv.addEventListener('pointerup',()=>drag=null);
+cv.addEventListener('pointercancel',()=>drag=null);
+
+/* ---------- projection ---------- */
+let W=0,H=0,SC=1;
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  W=r.width;H=Math.max(520,r.height);
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  SC=Math.min(W,H)/(dim===2?7:8);
+  draw();
+}
+window.addEventListener('resize',resize);
+function proj(p){
+  if(dim===2)return [W/2+p[0]*SC,H/2-p[1]*SC,0];
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const x1=p[0]*cy-p[1]*sy, y1=p[0]*sy+p[1]*cy, z1=p[2];
+  const y2=y1*cp-z1*sp, z2=y1*sp+z1*cp;
+  return [W/2+x1*SC, H/2-z2*SC, y2];
+}
+
+/* ---------- drawing ---------- */
+function line(a,b,color,w,dash){
+  const p=proj(a),q=proj(b);
+  ctx.strokeStyle=color;ctx.lineWidth=w;ctx.setLineDash(dash||[]);
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.setLineDash([]);
+}
+function arrow(v,color,label,w,alpha){
+  if(norm(v)<1e-9)return;
+  const o=proj([0,0,0]),t=proj(v);
+  ctx.globalAlpha=alpha==null?1:alpha;
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=w;
+  ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(t[0],t[1]);ctx.stroke();
+  const ang=Math.atan2(t[1]-o[1],t[0]-o[0]),h=8+2*w;
+  if(Math.hypot(t[0]-o[0],t[1]-o[1])>4){
+    ctx.beginPath();ctx.moveTo(t[0],t[1]);
+    ctx.lineTo(t[0]-h*Math.cos(ang-0.4),t[1]-h*Math.sin(ang-0.4));
+    ctx.lineTo(t[0]-h*Math.cos(ang+0.4),t[1]-h*Math.sin(ang+0.4));
+    ctx.closePath();ctx.fill();
+  }
+  ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+  if(label)ctx.fillText(label,t[0]+8,t[1]-6);
+  ctx.globalAlpha=1;
+}
+function quad(u,v,L,fill,stroke){
+  const pts=[[1,1],[1,-1],[-1,-1],[-1,1]].map(([s,t])=>proj(add(scale(u,s*L),scale(v,t*L))));
+  ctx.fillStyle=fill;ctx.strokeStyle=stroke;ctx.lineWidth=1.2;
+  ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fill();ctx.stroke();
+}
+// vector being processed and stage shown (clamped to where the algorithm stops)
+function current(){
+  if(step===0)return {idx:-1,st:0,stopped:false};
+  let idx=step-1, st=stage;
+  if(g.stop!==null&&(idx>g.stop||(idx===g.stop&&st===2))){idx=g.stop;st=1;}
+  return {idx,st,stopped:g.stop===idx&&st>=1};
+}
+function dotAt(v,color,r){
+  const p=proj(v);ctx.fillStyle=color;ctx.beginPath();ctx.arc(p[0],p[1],r,0,6.2832);ctx.fill();
+}
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.font='12px Segoe UI,Roboto,sans-serif';
+  // frame
+  for(let i=-3;i<=3;i++){line([i,-3,0],[i,3,0],'#ececea',1);line([-3,i,0],[3,i,0],'#ececea',1);}
+  if(dim===2){
+    line([-3.3,0,0],[3.3,0,0],'#b9b9b2',1.2);line([0,-3.3,0],[0,3.3,0],'#b9b9b2',1.2);
+  }else{
+    line([-3.4,0,0],[3.4,0,0],'#b9b9b2',1.2);line([0,-3.4,0],[0,3.4,0],'#b9b9b2',1.2);line([0,0,-3.4],[0,0,3.4],'#b9b9b2',1.2);
+    ctx.fillStyle='#9a9a94';
+    [[3.6,0,0,'e₁'],[0,3.6,0,'e₂'],[0,0,3.6,'e₃']].forEach(([a,b,c,l])=>{const p=proj([a,b,c]);ctx.fillText(l,p[0]-4,p[1]+4);});
+  }
+  // unit circle / unit sphere outline
+  ctx.strokeStyle='#b9b9b2';ctx.lineWidth=1.2;ctx.setLineDash([]);
+  ctx.beginPath();ctx.arc(W/2,H/2,SC,0,6.2832);ctx.stroke();
+
+  const {idx,st,stopped}=current();
+  if(idx<0){
+    for(let j=0;j<dim;j++)arrow(cols[j],C[j],'a'+SUBS[j],2.5);
+    return;
+  }
+  const prev=g.Q.slice(0,idx), inf=g.info[idx], L=3.2, a=cols[idx];
+  // span of the previous q's
+  if(prev.length===1)line(scale(prev[0],-L),scale(prev[0],L),'#3b7dd8',1.5);
+  if(prev.length===2)quad(prev[0],prev[1],L,'rgba(59,125,216,.14)','#3b7dd8');
+  // vectors still waiting are faint; processed inputs are no longer drawn
+  for(let j=idx+1;j<dim;j++)arrow(cols[j],C[j],'a'+SUBS[j],2,0.25);
+  // previous orthonormal vectors
+  for(let j=0;j<idx;j++)arrow(g.Q[j],C[j],'q'+SUBS[j],4.5);
+
+  if(st===0){                       // project a_i on the span of the previous q's
+    arrow(a,C[idx],'a'+SUBS[idx],2.5);
+    if(prev.length>0){
+      if(prev.length===2){
+        const c1=scale(prev[0],inf.comps[0]);
+        line([0,0,0],c1,'#3b7dd8',1.5,[4,4]);line(c1,inf.p,'#3b7dd8',1.5,[4,4]);
+      }
+      line(a,inf.p,'#555',1.3,[5,5]);
+      line([0,0,0],inf.p,'#3b7dd8',3);
+      dotAt(inf.p,'#3b7dd8',5);
+    }
+  }else if(st===1){                 // subtract the projection: what is left is q̃_i
+    arrow(a,C[idx],'a'+SUBS[idx],2.5,prev.length?0.45:1);
+    if(prev.length>0){
+      line([0,0,0],inf.p,'#3b7dd8',3);
+      dotAt(inf.p,'#3b7dd8',5);
+      line(a,inf.qt,'#3b7dd8',2,[6,4]);      // −projection, carried to the tip of a_i
+      line(inf.p,a,'#555',1.3,[5,5]);
+    }
+    arrow(inf.qt,'#e8801a','',3);
+    const tq=proj(stopped?[0,0,0]:inf.qt);
+    ctx.fillStyle=stopped?'#d23c3c':'#e8801a';ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+    ctx.fillText('q̃'+SUBS[idx]+(stopped?' = 0':''),tq[0]-(stopped?-10:26),tq[1]-8);
+    if(stopped)dotAt([0,0,0],'#d23c3c',5);
+  }else{                            // normalize: q_i = q̃_i / ‖q̃_i‖
+    arrow(inf.qt,'#e8801a','',2);
+    const tq=proj(inf.qt);
+    ctx.fillStyle='#e8801a';ctx.font='600 14px Segoe UI,Roboto,sans-serif';
+    ctx.fillText('q̃'+SUBS[idx],tq[0]-26,tq[1]-8);
+    arrow(g.Q[idx],C[idx],'q'+SUBS[idx],4.5);
+  }
+}
+
+/* ---------- Q, R, readout ---------- */
+const f=v=>(Math.abs(v)<5e-4?0:v).toFixed(2);
+const v2s=v=>'('+v.slice(0,dim).map(f).join(', ')+')';
+function table(id,get,vis){
+  let h='';
+  for(let i=0;i<dim;i++){
+    h+='<tr>';
+    for(let j=0;j<dim;j++)h+=vis(i,j)?`<td style="border-bottom:2px solid ${C[j]}">${f(get(i,j))}</td>`:'<td class="e">·</td>';
+    h+='</tr>';
+  }
+  $(id).innerHTML=h;
+}
+function equation(idx,st,stopped){
+  if(idx<0)return '';
+  const s=SUBS[idx], inf=g.info[idx];
+  const terms=inf.comps.map((c,j)=>`(q${SUBS[j]}ᵀa${s}) q${SUBS[j]}`);
+  const col=c=>`<b style="color:${c}">`;
+  if(st===0){
+    if(idx===0)return `${col(C[0])}a₁</b> = ${v2s(cols[0])}`;
+    const nums=inf.comps.map((c,j)=>`${f(c)} · ${v2s(g.Q[j])}`);
+    return `${col('#3b7dd8')}${terms.join(' + ')}</b> = ${nums.join(' + ')} = ${v2s(inf.p)}`;
+  }
+  if(st===1){
+    const rhs=idx===0?`a₁`:`a${s} − ${terms.join(' − ')}`;
+    return `${col(stopped?'#d23c3c':'#e8801a')}q̃${s}</b> = ${rhs} = ${v2s(inf.qt)}`;
+  }
+  return `${col(C[idx])}q${s}</b> = q̃${s} / ‖q̃${s}‖ = ${v2s(inf.qt)} / ${f(inf.nr)} = ${v2s(g.Q[idx])}`;
+}
+function update(){
+  syncModes();
+  const {idx,st,stopped}=current();
+  const k=idx<0?0:idx+(st===2?1:0);              // number of q's available in this view
+  table('Q',(i,j)=>g.Q[j][i],(i,j)=>j<k);
+  // R: finished columns, plus the current column as it is built (coefficients, then the norm)
+  table('R',(i,j)=>g.R[i][j]==null?(i<idx?g.info[idx].comps[i]:0):g.R[i][j],
+        (i,j)=>j<k||(j===idx&&!stopped&&i!==idx)||(j===idx&&stopped&&i<idx));
+  $('eq').innerHTML=equation(idx,st,stopped);
+  let rows='';
+  if(idx>=0){
+    for(let j=0;j<idx;j++)
+      rows+=`<tr><td>q${SUBS[j]}ᵀa${SUBS[idx]}</td><td>${f(g.info[idx].comps[j])}</td></tr>`;
+    if(st>=1)rows+=`<tr><td>‖q̃${SUBS[idx]}‖</td><td class="${stopped?'bad':''}">${g.info[idx].nr.toFixed(3)}</td></tr>`;
+    for(let a=0;a<k;a++)for(let b=a+1;b<k;b++){
+      const d=dot(g.Q[a],g.Q[b]);
+      rows+=`<tr><td>q${SUBS[a]}ᵀq${SUBS[b]}</td><td class="${Math.abs(d)<1e-6?'ok':'bad'}">${f(d)}</td></tr>`;
+    }
+    if(k>0)rows+=`<tr><td>‖QR − A‖, first ${k} column${k>1?'s':''}</td><td>${resid(cols,g,k,dim).toFixed(3)}</td></tr>`;
+  }
+  const big=idx<0?`${dim} vectors in ℝ${dim===2?'²':'³'}`:(stopped?`stopped at step ${idx+1}`:`step ${idx+1} of ${dim}`);
+  $('read').innerHTML=`<h2>Readout</h2><div id="big">${big}</div><table>${rows}</table>`;
+  draw();
+}
+
+setDim(2);
+})();
+</script>
+</body>
+</html>
