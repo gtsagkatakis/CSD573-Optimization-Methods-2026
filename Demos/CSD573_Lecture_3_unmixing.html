@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Two microphones, two speakers — CS-573 demo</title>
+<style>
+  :root{
+    --bg:#fbfbf9; --ink:#1d1f24; --muted:#6b6f78; --rule:#dcdcd6;
+    --plane:#3b7dd8; --planefill:rgba(59,125,216,.14);
+    --null:#d23c3c; --v1:#1f5fbf; --v2:#2a9d5c; --v3:#8a4fc9; --pt:#e8801a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px;display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+  header h1{font-size:22px;font-weight:600;margin:0}
+  header span{color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:8px 24px 24px;align-items:start}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  #stage{position:relative;background:#fff;border:1px solid var(--rule);border-radius:6px;height:720px}
+  canvas{display:block;width:100%;height:100%;border-radius:6px;touch-action:none}
+  #hint{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);pointer-events:none}
+  aside{display:flex;flex-direction:column;gap:14px}
+  section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
+  section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+  select{width:100%;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  .mat{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px;margin:8px 0 4px;align-items:center;font-size:13px;color:var(--muted)}
+  .mat div.v{padding:6px 4px;text-align:center;font-size:15px;border:1px solid var(--rule);border-radius:4px;background:#f6f6f3;color:var(--ink);font-variant-numeric:tabular-nums}
+  .mat .c1{border-bottom:3px solid var(--v1)} .mat .c2{border-bottom:3px solid var(--v2)}
+  .sl{display:grid;grid-template-columns:34px 1fr 52px;align-items:center;gap:8px;margin:3px 0}
+  .sl input[type=range]{width:100%}
+  .sl output{font-variant-numeric:tabular-nums;font-size:14px;text-align:right}
+  .sl label{font-size:14px}
+  #read{font-size:14px}
+  #read table{border-collapse:collapse;width:100%}
+  #read td{padding:3px 0;vertical-align:top}
+  #read td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  #det{font-size:30px;font-weight:600;line-height:1.1}
+  .m2{font-variant-numeric:tabular-nums;font-size:14px;border-collapse:collapse;margin:2px 0 6px;display:inline-table}
+  .m2 td{padding:1px 8px;text-align:right}
+  .pair{display:flex;gap:18px;align-items:flex-start}
+  .pair div{font-size:12px;color:var(--muted)}
+  .ok{color:#2a9d5c;font-weight:600} .bad{color:var(--null);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>Two microphones, two speakers: y = A s, ŝ = A⁻¹ y</h1>
+  <span>CS-573 Optimization Methods · Lecture 3 · drag the speakers and microphones in the room</span>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="hint"></div>
+  </div>
+  <aside>
+    <section>
+      <h2>Room layout → mixing A (gain = 1 / (1 + (d/2 m)²))</h2>
+      <select id="preset">
+        <optgroup label="Invertible">
+          <option value="sep" selected>Mics well separated</option>
+          <option value="close">Mics close together</option>
+          <option value="closer">Mics almost on top of each other</option>
+        </optgroup>
+        <optgroup label="Singular">
+          <option value="same">Both mics at the same spot</option>
+        </optgroup>
+        <optgroup label="Nearly singular">
+          <option value="far">One mic far from both speakers</option>
+        </optgroup>
+      </select>
+      <div class="mat" id="mat"></div>
+      <div class="sl"><label for="sig">noise</label><input type="range" id="sig" min="0" max="0.2" step="0.005" value="0"><output id="osig">0</output></div>
+    </section>
+    <section id="read"></section>
+  </aside>
+</main>
+<script>
+(() => {
+const $=id=>document.getElementById(id);
+const TOL=1e-9, R0=2; // gain length scale in metres
+const ROOM=[6,3.2];   // room size in metres
+/* positions: speakers sp[0], sp[1]; mics mc[0], mc[1] (metres) */
+const presets={
+  sep:   {sp:[[1.2,2.6],[4.8,2.6]], mc:[[1.6,0.8],[4.4,0.8]]},
+  close: {sp:[[1.2,2.6],[4.8,2.6]], mc:[[2.6,0.8],[3.4,0.8]]},
+  closer:{sp:[[1.2,2.6],[4.8,2.6]], mc:[[2.9,0.8],[3.1,0.8]]},
+  same:  {sp:[[1.2,2.6],[4.8,2.6]], mc:[[3.0,0.8],[3.0,0.8]]},
+  far:   {sp:[[1.2,2.6],[2.4,2.6]], mc:[[1.8,1.6],[5.7,0.4]]},
+};
+let sp=presets.sep.sp.map(p=>p.slice()), mc=presets.sep.mc.map(p=>p.slice());
+const gain=(m,s)=>1/(1+(Math.hypot(m[0]-s[0],m[1]-s[1])/R0)**2);
+const mixing=()=>[[gain(mc[0],sp[0]),gain(mc[0],sp[1])],[gain(mc[1],sp[0]),gain(mc[1],sp[1])]];
+
+/* sources: N samples, a low tone and a chirp */
+const N=400; const t=Array.from({length:N},(_,i)=>i/N);
+const s1=t.map(u=>Math.sin(2*Math.PI*2*u));
+const s2=t.map(u=>0.9*Math.sin(2*Math.PI*(4*u+10*u*u)));
+function lcg(seed){ let x=seed; return ()=>{ x=(x*1664525+1013904223)%4294967296; return x/4294967296; }; }
+const rnd=lcg(7); const g=()=>{ const u=Math.max(1e-9,rnd()),v=rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+const n1=Array.from({length:N},g), n2=Array.from({length:N},g);
+
+/* A display (read-only, derived from the room) */
+const matEl=$('mat'), cells=[];
+[['','speaker 1','speaker 2'],['mic 1'],['mic 2']].forEach((row,i)=>{
+  if(i===0){ row.forEach(txt=>{ const d=document.createElement('div'); d.textContent=txt; d.style.textAlign='center'; matEl.appendChild(d); }); return; }
+  const lab=document.createElement('div'); lab.textContent=row[0]; matEl.appendChild(lab);
+  for(let j=0;j<2;j++){ const d=document.createElement('div'); d.className='v c'+(j+1); matEl.appendChild(d); cells.push(d); }
+});
+const f=v=>(Math.abs(v)<5e-4?0:v).toFixed(2).replace(/\.?0+$/,'');
+$('preset').addEventListener('change',e=>{ const p=presets[e.target.value]; if(!p)return; sp=p.sp.map(q=>q.slice()); mc=p.mc.map(q=>q.slice()); update(); });
+$('sig').addEventListener('input',update);
+
+/* compute */
+let S=null;
+function compute(){
+  const A=mixing(); cells.forEach((d,k)=>d.textContent=f(A[Math.floor(k/2)][k%2]));
+  const det=A[0][0]*A[1][1]-A[0][1]*A[1][0];
+  const inv=Math.abs(det)>TOL?[[A[1][1]/det,-A[0][1]/det],[-A[1][0]/det,A[0][0]/det]]:null;
+  const sig=+$('sig').value; $('osig').textContent=f(sig);
+  const W=inv||[[1,0],[0,1]];
+  const y1=s1.map((v,i)=>A[0][0]*v+A[0][1]*s2[i]+sig*n1[i]);
+  const y2=s1.map((v,i)=>A[1][0]*v+A[1][1]*s2[i]+sig*n2[i]);
+  const h1=y1.map((v,i)=>W[0][0]*v+W[0][1]*y2[i]);
+  const h2=y1.map((v,i)=>W[1][0]*v+W[1][1]*y2[i]);
+  const rms=(a,b)=>Math.sqrt(a.reduce((s,v,i)=>s+(v-b[i])**2,0)/N);
+  const WA=[[W[0][0]*A[0][0]+W[0][1]*A[1][0], W[0][0]*A[0][1]+W[0][1]*A[1][1]],[W[1][0]*A[0][0]+W[1][1]*A[1][0], W[1][0]*A[0][1]+W[1][1]*A[1][1]]];
+  const eWA=Math.max(...[WA[0][0]-1,WA[0][1],WA[1][0],WA[1][1]-1].map(Math.abs));
+  const rank=Math.abs(det)>TOL?2:1;
+  S={A,det,inv,W,WA,eWA,sig,y1,y2,h1,h2,rank,e1:rms(h1,s1),e2:rms(h2,s2),maxW:Math.max(...W.flat().map(Math.abs))};
+}
+
+/* drawing */
+const cv=$('c'), ctx=cv.getContext('2d'); let Wd=0,H=0, room={x:0,y:0,w:0,h:0,s:1};
+function resize(){ const r=$('stage').getBoundingClientRect(); const dpr=window.devicePixelRatio||1;
+  Wd=r.width;H=r.height; cv.width=Wd*dpr;cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); if(S)draw(); }
+window.addEventListener('resize',resize);
+const RX=x=>room.x+x*room.s, RY=y=>room.y+room.h-y*room.s;
+function drawRoom(y0,h){
+  const w=(Wd-32)*0.56; const s=Math.min(w/ROOM[0],h/ROOM[1]); room={x:16,y:y0,w:ROOM[0]*s,h:ROOM[1]*s,s};
+  ctx.save(); ctx.fillStyle='#f6f6f3'; ctx.fillRect(room.x,room.y,room.w,room.h); ctx.strokeStyle='#dcdcd6'; ctx.strokeRect(room.x,room.y,room.w,room.h);
+  ctx.strokeStyle='#ececea'; for(let i=1;i<ROOM[0];i++){ ctx.beginPath(); ctx.moveTo(RX(i),room.y); ctx.lineTo(RX(i),room.y+room.h); ctx.stroke(); } for(let i=1;i<ROOM[1];i++){ ctx.beginPath(); ctx.moveTo(room.x,RY(i)); ctx.lineTo(room.x+room.w,RY(i)); ctx.stroke(); }
+  ctx.fillStyle='#9a9a94'; ctx.font='11px Segoe UI,Roboto,sans-serif'; ctx.fillText('1 m',RX(0)+3,RY(0)-3);
+  // gain lines mic→speaker, thickness ∝ gain
+  const A=S.A; const mcol=['#33363c','#9a9a94'];
+  for(let i=0;i<2;i++)for(let j=0;j<2;j++){ const a=A[i][j]; ctx.strokeStyle=mcol[i]; ctx.globalAlpha=0.25+0.6*a; ctx.lineWidth=1+5*a; ctx.setLineDash(i?[6,5]:[]);
+    ctx.beginPath(); ctx.moveTo(RX(mc[i][0]),RY(mc[i][1])); ctx.lineTo(RX(sp[j][0]),RY(sp[j][1])); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+    const mx=(RX(mc[i][0])+RX(sp[j][0]))/2, my=(RY(mc[i][1])+RY(sp[j][1]))/2; ctx.fillStyle='#fff'; ctx.fillRect(mx-16,my-8,32,15); ctx.fillStyle='#1d1f24'; ctx.font='11px Segoe UI,Roboto,sans-serif'; ctx.textAlign='center'; ctx.fillText('a'+'₁₂'[i]+'₁₂'[j]+'='+f(a),mx,my+4); }
+  // speakers
+  const scol=['#1f5fbf','#2a9d5c'];
+  sp.forEach((p,j)=>{ ctx.fillStyle=scol[j]; ctx.beginPath(); ctx.rect(RX(p[0])-9,RY(p[1])-9,18,18); ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='#1d1f24'; ctx.font='600 13px Segoe UI,Roboto,sans-serif'; ctx.textAlign='center'; ctx.fillText('speaker '+(j+1),RX(p[0]),RY(p[1])-14); });
+  mc.forEach((p,i)=>{ ctx.fillStyle=mcol[i]; ctx.beginPath(); ctx.arc(RX(p[0])+(i&&Math.hypot(mc[0][0]-mc[1][0],mc[0][1]-mc[1][1])<1e-6?4:0),RY(p[1]),9,0,6.283); ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='#1d1f24'; ctx.font='600 13px Segoe UI,Roboto,sans-serif'; ctx.textAlign='center'; ctx.fillText('mic '+(i+1),RX(p[0]),RY(p[1])+24+(i&&Math.hypot(mc[0][0]-mc[1][0],mc[0][1]-mc[1][1])<0.6?14:0)); });
+  ctx.restore();
+}
+function bracketMat(x,y,rows,colW,rowH,cols){ // rows: array of arrays of strings; returns width
+  const w=cols*colW+12, h=rows.length*rowH; ctx.save(); ctx.strokeStyle='#1d1f24'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.moveTo(x+6,y); ctx.lineTo(x,y); ctx.lineTo(x,y+h); ctx.lineTo(x+6,y+h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x+w-6,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+h); ctx.lineTo(x+w-6,y+h); ctx.stroke();
+  ctx.font='14px Segoe UI,Roboto,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  rows.forEach((r,i)=>r.forEach((c,j)=>{ ctx.fillStyle=c.col||'#1d1f24'; ctx.fillText(c.t,x+6+colW*(j+0.5),y+rowH*(i+0.5)); })); ctx.restore(); return w; }
+function drawEquations(x0,y0,w,h){
+  const {A,inv}=S; const rowH=24, cw=62, vw=34; const sym=(t,col)=>({t,col});
+  const eq=(y,lhs,M,Mcol,rhs,name)=>{ let x=x0; ctx.save(); ctx.fillStyle='#6b6f78'; ctx.font='600 13px Segoe UI,Roboto,sans-serif'; ctx.textAlign='left'; ctx.fillText(name,x,y-10); ctx.restore();
+    x+=bracketMat(x,y,lhs,vw,rowH,1)+10; ctx.save(); ctx.font='16px Segoe UI,Roboto,sans-serif'; ctx.textBaseline='middle'; ctx.fillStyle='#1d1f24'; ctx.fillText('=',x,y+rowH); ctx.restore(); x+=18;
+    x+=bracketMat(x,y,M.map(r=>r.map((v,j)=>sym(f(v),Mcol[j]))),cw,rowH,2)+8; bracketMat(x,y,rhs,vw,rowH,1); };
+  eq(y0+30,[[sym('y₁','#33363c')],[sym('y₂','#9a9a94')]],A,['#1f5fbf','#2a9d5c'],[[sym('s₁','#1f5fbf')],[sym('s₂','#2a9d5c')]],'mixing  y = A s');
+  if(inv) eq(y0+118,[[sym('ŝ₁','#1f5fbf')],[sym('ŝ₂','#2a9d5c')]],inv,['#33363c','#9a9a94'],[[sym('y₁','#33363c')],[sym('y₂','#9a9a94')]],'unmixing  ŝ = A⁻¹ y');
+  else { ctx.save(); ctx.fillStyle='#6b6f78'; ctx.font='600 13px Segoe UI,Roboto,sans-serif'; ctx.fillText('unmixing  ŝ = A⁻¹ y',x0,y0+108); ctx.fillStyle='#d23c3c'; ctx.font='600 14px Segoe UI,Roboto,sans-serif'; ctx.fillText('det(A) = 0: A⁻¹ does not exist',x0,y0+140); ctx.restore(); }
+}
+function trace(sig,x0,y0,w,h,amp,col,lw,dash){
+  ctx.save(); ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash||[]); ctx.beginPath();
+  sig.forEach((v,i)=>{ const x=x0+i/(N-1)*w, y=y0+h/2-Math.max(-1,Math.min(1,v/amp))*h/2*0.92; i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke(); ctx.restore();
+}
+function row(title,y0,h,x0,w,items,amp,scaleLab){
+  ctx.save(); ctx.fillStyle='#f6f6f3'; ctx.fillRect(x0,y0,w,h); ctx.strokeStyle='#dcdcd6'; ctx.strokeRect(x0,y0,w,h);
+  ctx.strokeStyle='#c4c4be'; ctx.setLineDash([3,4]); ctx.beginPath(); ctx.moveTo(x0,y0+h/2); ctx.lineTo(x0+w,y0+h/2); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle='#1d1f24'; ctx.font='600 14px Segoe UI,Roboto,sans-serif'; ctx.fillText(title,x0,y0-6);
+  ctx.fillStyle='#9a9a94'; ctx.font='11px Segoe UI,Roboto,sans-serif'; ctx.textAlign='right'; ctx.fillText('±'+scaleLab,x0+w-4,y0+12); ctx.restore();
+  items.forEach(it=>trace(it.s,x0,y0,w,h,amp,it.col,it.lw||2,it.dash));
+}
+function draw(){
+  ctx.clearRect(0,0,Wd,H);
+  const {y1,y2,h1,h2,sig}=S;
+  const x0=16, w=Wd-32; const gap=30, roomH=200; const h=(H-roomH-5*gap-10)/4;
+  drawRoom(12,roomH); drawEquations(room.x+room.w+24,12,Wd-16-(room.x+room.w+24),roomH);
+  const ampY=Math.max(1,...y1.map(Math.abs),...y2.map(Math.abs))*1.05;
+  const amp1=Math.max(1,...h1.map(Math.abs))*1.05, amp2=Math.max(1,...h2.map(Math.abs))*1.05;
+  let y=12+roomH+gap;
+  row('speakers  s₁ (blue), s₂ (green)', y, h, x0, w, [{s:s1,col:'#1f5fbf'},{s:s2,col:'#2a9d5c'}], 1, '1'); y+=h+gap;
+  row('microphones  y₁ (dark), y₂ (light)', y, h, x0, w, [{s:y1,col:'#33363c'},{s:y2,col:'#9a9a94'}], ampY, f(ampY)); y+=h+gap;
+  row('unmixed  ŝ₁  (s₁ dashed behind)', y, h, x0, w, [{s:s1,col:'rgba(31,95,191,.35)',dash:[4,4],lw:1.5},{s:h1,col:'#1f5fbf'}], amp1, f(amp1)); y+=h+gap;
+  row('unmixed  ŝ₂  (s₂ dashed behind)', y, h, x0, w, [{s:s2,col:'rgba(42,157,92,.35)',dash:[4,4],lw:1.5},{s:h2,col:'#2a9d5c'}], amp2, f(amp2));
+  $('hint').textContent='';
+}
+
+/* drag speakers and mics */
+let drag=null;
+function hit(px,py){ const objs=[...mc.map((p,i)=>({p,k:'m'+i})),...sp.map((p,j)=>({p,k:'s'+j}))];
+  let best=null,bd=16; objs.forEach(o=>{ const d=Math.hypot(RX(o.p[0])-px,RY(o.p[1])-py); if(d<bd){bd=d;best=o;} }); return best; }
+cv.addEventListener('pointerdown',e=>{ const r=cv.getBoundingClientRect(); const o=hit(e.clientX-r.left,e.clientY-r.top); if(!o)return; drag=o; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener('pointermove',e=>{ if(!drag)return; const r=cv.getBoundingClientRect();
+  const x=Math.max(0.2,Math.min(ROOM[0]-0.2,(e.clientX-r.left-room.x)/room.s)), y=Math.max(0.2,Math.min(ROOM[1]-0.2,(room.y+room.h-(e.clientY-r.top))/room.s));
+  drag.p[0]=Math.round(x*20)/20; drag.p[1]=Math.round(y*20)/20; $('preset').value=''; update(); });
+cv.addEventListener('pointerup',()=>drag=null); cv.addEventListener('pointercancel',()=>drag=null);
+
+/* readout */
+function readout(){
+  const {det,inv,WA,eWA,sig,e1,e2,rank,maxW}=S;
+  let h='<h2>Readout</h2><div id="det">det(A) = '+f(det)+'</div><table>';
+  h+='<tr><td>rank(A)</td><td>'+rank+'</td></tr>';
+  h+='<tr><td>mic spacing</td><td>'+f(Math.hypot(mc[0][0]-mc[1][0],mc[0][1]-mc[1][1]))+' m</td></tr>';
+  h+='<tr><td>A⁻¹</td><td class="'+(inv?'ok':'bad')+'">'+(inv?'exists':'does not exist')+'</td></tr>'+(inv?'':'<tr><td>ŝ shown</td><td>= y (no unmixing)</td></tr>')+'</table>';
+  h+='<table>';
+  h+='<tr><td>error ŝ₁ − s₁ (rms)</td><td class="'+(e1<0.02?'ok':(e1<0.2?'':'bad'))+'">'+f(e1)+'</td></tr>';
+  h+='<tr><td>error ŝ₂ − s₂ (rms)</td><td class="'+(e2<0.02?'ok':(e2<0.2?'':'bad'))+'">'+f(e2)+'</td></tr>';
+  h+='</table>'; $('read').innerHTML=h;
+}
+function update(){ compute(); readout(); draw(); }
+resize(); update();
+})();
+</script>
+</body>
+</html>
