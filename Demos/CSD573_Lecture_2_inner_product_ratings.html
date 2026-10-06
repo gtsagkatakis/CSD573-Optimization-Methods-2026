@@ -15,7 +15,7 @@
   h1{font-size:30px;line-height:1.1;margin:0;font-weight:650;letter-spacing:-.01em}
   .formula{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:22px}
   .grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
-  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  @media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
   figure{margin:0;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px}
   figcaption{font-size:15px;color:var(--muted);padding:2px 4px 6px}
   .cw{position:relative;width:100%;aspect-ratio:1/1;max-height:calc(100vh - 150px);margin:0 auto}
@@ -56,6 +56,7 @@
   <header>
     <h1>Who has similar taste?</h1>
     <div class="formula"><i>a</i>ᵀ<i>b</i> = Σ <i>aᵢbᵢ</i> = ‖<i>a</i>‖ ‖<i>b</i>‖ cos <i>θ</i></div>
+    <a href="../index.html" style="margin:-4px 0 -4px auto;padding:4px 0;font-size:14px;font-weight:400;color:inherit;white-space:nowrap">&larr; All demos</a>
   </header>
 
   <div class="grid">
