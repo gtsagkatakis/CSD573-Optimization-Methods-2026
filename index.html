@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Demos</title>
+<style>
+  :root{--ink:#14213d;--muted:#5b6478;--paper:#fbfbf8;--panel:#fff;--rule:#d9dce3;--a1:#2f5d8a;--you:#f2a20c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:17px/1.45 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:960px;margin:0 auto;padding:28px 16px 40px}
+  h1{font-size:30px;line-height:1.1;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+  .sub{color:var(--muted);margin:0 0 24px}
+  h2{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;
+    margin:26px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--rule)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+  a.card{display:block;background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;
+    color:inherit;text-decoration:none;transition:border-color .15s,box-shadow .15s}
+  a.card:hover{border-color:var(--a1);box-shadow:0 2px 8px rgba(20,33,61,.08)}
+  a.card:focus-visible{outline:3px solid var(--you);outline-offset:2px}
+  a.card b{display:block;font-weight:600}
+  a.card span{display:block;font-size:13px;color:var(--muted);margin-top:4px;word-break:break-all}
+  .msg{color:var(--muted)}
+  .msg a{color:var(--a1)}
+</style>
+</head>
+<body>
+<main>
+  <h1>CS-573 Optimization Methods</h1>
+  <p class="sub">Interactive demos</p>
+  <div id="list"><p class="msg">Loading demos…</p></div>
+</main>
+
+<script>
+// Demos are discovered automatically: every .html file in the Demos/ folder of
+// the GitHub repository is listed here. To add a demo, just upload the file to
+// Demos/ (e.g. via "Add file → Upload files" on GitHub). Name it like
+// CSD573_Lecture_5_something.html to have it grouped under "Lecture 5".
+
+// Used when the page is not served from <owner>.github.io/<repo>/ (e.g. opened locally).
+const FALLBACK = { owner: "gtsagkatakis", repo: "CSD573-Optimization-Methods-2026" };
+const FOLDER = "Demos";
+const CACHE_KEY = "cs573-demos", CACHE_MS = 10 * 60 * 1000;
+
+function repoInfo() {
+  const host = location.hostname;
+  if (host.endsWith(".github.io")) {
+    const owner = host.split(".")[0];
+    const first = location.pathname.split("/").filter(Boolean)[0];
+    const repo = first && !first.endsWith(".html") ? first : host;
+    return { owner, repo };
+  }
+  return FALLBACK;
+}
+
+async function listFiles({ owner, repo }) {
+  try {
+    const c = JSON.parse(localStorage.getItem(CACHE_KEY));
+    if (c && Date.now() - c.t < CACHE_MS) return c.files;
+  } catch (e) {}
+  const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${FOLDER}`);
+  if (!r.ok) throw new Error("GitHub API " + r.status);
+  const files = (await r.json())
+    .filter(f => f.type === "file" && /\.html?$/i.test(f.name))
+    .map(f => f.name);
+  try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), files })); } catch (e) {}
+  return files;
+}
+
+// Nice name from the demo's own <title>, falling back to the file name.
+function nameFromFile(file) {
+  return file.replace(/\.html?$/i, "").replace(/^CSD?573_/i, "").replace(/Lecture_\d+_?/i, "")
+    .replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+}
+async function titleOf(file) {
+  try {
+    const r = await fetch(`${FOLDER}/${encodeURIComponent(file)}`);
+    const t = (await r.text()).match(/<title>([^<]*)<\/title>/i);
+    const clean = t && t[1].replace(/^\s*CS-?573\s*[·:\-–—|]\s*/i, "").replace(/\s*[·:\-–—|]\s*CS-?573.*$/i, "").trim();
+    if (clean) return clean;
+  } catch (e) {}
+  return nameFromFile(file);
+}
+
+function lectureOf(file) {
+  const m = file.match(/Lecture[_\s-]*(\d+)/i);
+  return m ? +m[1] : null;
+}
+
+function esc(s) {
+  return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function main() {
+  const box = document.getElementById("list");
+  const info = repoInfo();
+  let files;
+  try {
+    files = await listFiles(info);
+  } catch (e) {
+    const url = `https://github.com/${info.owner}/${info.repo}/tree/HEAD/${FOLDER}`;
+    box.innerHTML = `<p class="msg">Could not load the demo list (${esc(e.message)}). ` +
+      `Browse them on <a href="${url}">GitHub</a> instead.</p>`;
+    return;
+  }
+  if (!files.length) { box.innerHTML = `<p class="msg">No demos yet.</p>`; return; }
+
+  const demos = await Promise.all(files.map(async f => ({ file: f, title: await titleOf(f), lec: lectureOf(f) })));
+  const groups = new Map();
+  demos.sort((a, b) => (a.lec ?? 1e9) - (b.lec ?? 1e9) || a.title.localeCompare(b.title))
+    .forEach(d => {
+      const k = d.lec == null ? "Other" : "Lecture " + d.lec;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(d);
+    });
+
+  box.innerHTML = [...groups].map(([name, items]) =>
+    `<h2>${name}</h2><div class="grid">` +
+    items.map(d => `<a class="card" href="${FOLDER}/${encodeURIComponent(d.file)}">` +
+      `<b>${esc(d.title)}</b><span>${esc(d.file)}</span></a>`).join("") +
+    `</div>`).join("");
+}
+main();
+</script>
+</body>
+</html>
