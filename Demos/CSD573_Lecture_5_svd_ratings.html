@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVD of a ratings matrix — CS-573 demo</title>
+<style>
+  :root{
+    --bg:#fbfbf9; --ink:#1d1f24; --muted:#6b6f78; --rule:#dcdcd6;
+    --plane:#3b7dd8; --null:#d23c3c; --pt:#e8801a;
+    --v1:#1f5fbf; --v2:#2a9d5c; --v3:#8a4fc9;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px;display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+  header h1{font-size:22px;font-weight:600;margin:0}
+  header span{color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:8px 24px 24px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  #stage{position:relative;background:#fff;border:1px solid var(--rule);border-radius:6px;min-height:520px}
+  canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;border-radius:6px}
+  canvas:active{cursor:grabbing}
+  #legend{position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--muted);pointer-events:none}
+  aside{display:flex;flex-direction:column;gap:14px}
+  section{border:1px solid var(--rule);border-radius:6px;padding:12px 14px;background:#fff}
+  section h2{font-size:14px;font-weight:600;margin:0 0 8px;color:var(--muted)}
+  select{width:100%;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  table.m{border-collapse:collapse;width:100%;font-size:14px}
+  table.m th{font-weight:400;color:var(--muted);font-size:12px;padding:2px 3px;text-align:center;line-height:1.2}
+  table.m th.u{text-align:left;color:var(--ink);font-size:14px;white-space:nowrap}
+  table.m th.u i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+  table.m td{padding:2px 3px;text-align:center;font-variant-numeric:tabular-nums}
+  table.m input{width:100%;padding:5px 2px;text-align:center;font:inherit;font-size:15px;border:1px solid var(--rule);border-radius:4px;background:#fff}
+  tr.r0 input{border-bottom:3px solid var(--v1)} tr.r1 input{border-bottom:3px solid var(--v2)} tr.r2 input{border-bottom:3px solid var(--v3)}
+  .row{display:flex;gap:8px}
+  .row button{flex:1;padding:7px;font:inherit;font-size:14px;border:1px solid var(--rule);border-radius:4px;background:#fff;cursor:pointer}
+  .row button:hover{background:#f3f3ef}
+  .row button.mode.on,.row button.tog.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--pt);outline-offset:1px}
+  #read table{border-collapse:collapse;width:100%;font-size:14px}
+  #read td{padding:3px 0;vertical-align:top}
+  #read td:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  #rank{font-size:30px;font-weight:600;line-height:1.1;margin-bottom:4px}
+  table.m th.pick{cursor:pointer;border-radius:4px;padding:4px 6px}
+  table.m th.pick.sel{background:var(--ink);color:#fff}
+  .kept{color:var(--plane)} .disc{color:var(--null)}
+  .ok{color:#2a9d5c;font-weight:600} .bad{color:var(--null);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <h1>SVD of a ratings matrix</h1>
+</header>
+<main>
+  <div id="stage">
+    <canvas id="c"></canvas>
+  </div>
+  <aside>
+    <section>
+      <h2>Ratings A (0 to 5)</h2>
+      <table class="m" id="tA"></table>
+      <div class="row" style="margin-top:10px">
+        <button class="vw tog on" data-view="users">Users in movie space</button>
+        <button class="vw tog" data-view="movies">Movies in user space</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="mode" data-k="1">Rank 1</button>
+        <button class="mode on" data-k="2">Rank 2</button>
+        <button class="mode" data-k="3">Rank 3</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="projAll" class="tog">Project users</button>
+      </div>
+    </section>
+    <section>
+      <h2 id="facT">A = U Σ Vᵀ</h2>
+      <table class="m" id="tU"></table>
+      <table class="m" id="tS" style="margin-top:10px"></table>
+      <table class="m" id="tV" style="margin-top:10px"></table>
+    </section>
+    <section id="read"></section>
+  </aside>
+</main>
+
+<script>
+(() => {
+//MATH-BEGIN
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const norm=a=>Math.sqrt(dot(a,a));
+const scale=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const matvec=(A,x)=>[dot(A[0],x),dot(A[1],x),dot(A[2],x)];
+const transpose=A=>[[A[0][0],A[1][0],A[2][0]],[A[0][1],A[1][1],A[2][1]],[A[0][2],A[1][2],A[2][2]]];
+
+// Jacobi eigen-decomposition of a symmetric 3×3: returns {vals, vecs(columns)}
+function jacobi(S){
+  const a=S.map(r=>r.slice()); const V=[[1,0,0],[0,1,0],[0,0,1]];
+  for(let it=0;it<60;it++){
+    let p=0,q=1,m=Math.abs(a[0][1]);
+    if(Math.abs(a[0][2])>m){p=0;q=2;m=Math.abs(a[0][2]);}
+    if(Math.abs(a[1][2])>m){p=1;q=2;m=Math.abs(a[1][2]);}
+    if(m<1e-14)break;
+    const th=0.5*Math.atan2(2*a[p][q],a[q][q]-a[p][p]);
+    const c=Math.cos(th),s=Math.sin(th);
+    for(let k=0;k<3;k++){const akp=a[k][p],akq=a[k][q];a[k][p]=c*akp-s*akq;a[k][q]=s*akp+c*akq;}
+    for(let k=0;k<3;k++){const apk=a[p][k],aqk=a[q][k];a[p][k]=c*apk-s*aqk;a[q][k]=s*apk+c*aqk;}
+    for(let k=0;k<3;k++){const vkp=V[k][p],vkq=V[k][q];V[k][p]=c*vkp-s*vkq;V[k][q]=s*vkp+c*vkq;}
+  }
+  return {vals:[a[0][0],a[1][1],a[2][2]], vecs:V};
+}
+function complete(basis){
+  const out=basis.map(v=>v.slice());
+  for(const c of [[1,0,0],[0,1,0],[0,0,1]]){
+    if(out.length===3)break;
+    let v=c.slice();
+    for(const b of out)v=sub(v,scale(b,dot(v,b)));
+    const n=norm(v); if(n>1e-6)out.push(scale(v,1/n));
+  }
+  return out;
+}
+// SVD of 3×3 via AᵀA. sig descending; U[i], V[i] are the i-th left / right singular vectors.
+function svd(A){
+  const At=transpose(A);
+  const S=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<3;i++)for(let j=0;j<3;j++)for(let k=0;k<3;k++)S[i][j]+=At[i][k]*A[k][j];
+  const e=jacobi(S);
+  const order=[0,1,2].sort((i,j)=>e.vals[j]-e.vals[i]);
+  const sig=order.map(i=>Math.sqrt(Math.max(e.vals[i],0)));
+  let V=order.map(i=>[e.vecs[0][i],e.vecs[1][i],e.vecs[2][i]]);
+  // sign convention: v1 points into the positive octant; others have their largest entry positive
+  V=V.map((v,i)=>{
+    let s;
+    if(i===0)s=v[0]+v[1]+v[2];
+    else{let m=0;for(let j=1;j<3;j++)if(Math.abs(v[j])>Math.abs(v[m]))m=j;s=v[m];}
+    return s<0?scale(v,-1):v;
+  });
+  const tol=1e-7*Math.max(1e-300,sig[0]);
+  const r=sig[0]>1e-12?sig.filter(s=>s>tol).length:0;
+  let U=[];
+  for(let i=0;i<r;i++)U.push(scale(matvec(A,V[i]),1/sig[i]));
+  U=complete(U);
+  return {sig,U,V,rank:r};
+}
+// rows of A_k = sum_{i<k} sig_i U[i][row] V[i]  (projection of each user onto span(v1..vk))
+function truncate(d,k){
+  const M=[[0,0,0],[0,0,0],[0,0,0]];
+  for(let i=0;i<k;i++)for(let r=0;r<3;r++)for(let c=0;c<3;c++)M[r][c]+=d.sig[i]*d.U[i][r]*d.V[i][c];
+  return M;
+}
+const msub=(A,B)=>A.map((r,i)=>r.map((v,j)=>v-B[i][j]));
+const fro=A=>Math.sqrt(A.reduce((s,r)=>s+r.reduce((t,v)=>t+v*v,0),0));
+const tail=(sig,k)=>Math.sqrt(sig.slice(k).reduce((s,v)=>s+v*v,0));
+
+const presets={
+  r1:[[5,3,1],[4,2.4,0.8],[2.5,1.5,0.5]],
+  r2:[[5,1,2],[1,5,2],[3,3,2]],
+  q2:[[5,1,2],[1,5,2],[3,3,2.6]],
+  q1:[[5,3,1],[4,2.6,0.6],[2.5,1.4,0.7]],
+  r3:[[5,1,1],[1,4.5,1.5],[0.5,1,5]],
+};
+//MATH-END
+if(typeof document==='undefined'){globalThis.__m={svd,truncate,msub,fro,tail,presets,dot,sub};return;}
+
+const users=['Alice','Bob','Carol'];
+const movies=['Top Gun: Maverick','Oppenheimer','Barbie'];
+const ucol=['#1f5fbf','#2a9d5c','#8a4fc9'];
+
+let A=presets.q2.map(r=>r.slice());
+let k=2,dec=svd(A),yaw=-0.65,pitch=0.5,selU=null;
+const uth=[],mth=[];
+let projAll=false,view='users',selM=null;
+const MCOL='#e8801a';
+function selectUser(i){selU=selU===i?null:i;uth.forEach((t,n)=>t.classList.toggle('sel',n===selU));draw();}
+function selectMovie(j){selM=selM===j?null:j;mth.forEach((t,n)=>t.classList.toggle('sel',n===selM));draw();}
+// what the scene shows: users (rows of A) with directions V, or movies (columns of A) with directions U
+function scene(){
+  const Ak=truncate(dec,k);
+  return view==='users'
+    ?{pts:A,apx:Ak,dirs:dec.V,names:users,cols:ucol,axes:movies,sel:selU,sym:'v',pick:selectUser}
+    :{pts:transpose(A),apx:transpose(Ak),dirs:dec.U,names:movies,cols:[MCOL,MCOL,MCOL],axes:users,sel:selM,sym:'u',pick:selectMovie};
+}
+
+/* ---------- DOM ---------- */
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const inputs=[];
+(function buildA(){
+  const t=document.getElementById('tA');
+  let h=document.createElement('tr');h.innerHTML='<th></th>'+movies.map(m=>`<th class="pick">${m}</th>`).join('');t.appendChild(h);
+  [0,1,2].forEach(j=>{const th=h.children[j+1];th.onclick=()=>selectMovie(j);mth.push(th);});
+  for(let i=0;i<3;i++){
+    const tr=document.createElement('tr');tr.className='r'+i;
+    tr.innerHTML=`<th class="u pick"><i style="background:${ucol[i]}"></i>${users[i]}</th>`;
+    tr.firstChild.onclick=()=>selectUser(i);uth.push(tr.firstChild);
+    for(let j=0;j<3;j++){
+      const td=document.createElement('td'),inp=document.createElement('input');
+      inp.type='number';inp.step='0.5';inp.min='0';inp.max='5';inp.value=A[i][j];
+      inp.setAttribute('aria-label',`${users[i]} rates ${movies[j]}`);
+      inp.addEventListener('input',()=>{const v=parseFloat(inp.value);A[i][j]=isNaN(v)?0:v;dec=svd(A);update();});
+      td.appendChild(inp);tr.appendChild(td);inputs.push(inp);
+    }
+    t.appendChild(tr);
+  }
+})();
+function loadMatrix(){inputs.forEach((inp,n)=>inp.value=A[Math.floor(n/3)][n%3]);}
+document.querySelectorAll('button.mode').forEach(b=>{
+  b.onclick=()=>{k=+b.dataset.k;document.querySelectorAll('button.mode').forEach(o=>o.classList.toggle('on',o===b));align();update();};
+});
+
+document.querySelectorAll('button.vw').forEach(b=>{
+  b.onclick=()=>{
+    view=b.dataset.view;
+    document.querySelectorAll('button.vw').forEach(o=>o.classList.toggle('on',o===b));
+    document.getElementById('projAll').textContent=view==='users'?'Project users':'Project movies';
+    align();draw();
+  };
+});
+document.getElementById('projAll').onclick=e=>{projAll=!projAll;e.currentTarget.classList.toggle('on',projAll);draw();};
+
+/* ---------- camera ---------- */
+function lookAlong(n,tilt){
+  yaw=Math.atan2(n[0],n[1]);
+  pitch=Math.atan2(-n[2],Math.hypot(n[0],n[1]))+tilt;
+}
+function align(){
+  const D=scene().dirs;
+  if(k===2&&dec.sig[1]>1e-9){let n=D[2];if(n[2]<0)n=scale(n,-1);lookAlong(n,0.6);}
+  else if(k===1&&dec.sig[0]>1e-9){let n=D[1];if(n[2]<0)n=scale(n,-1);lookAlong(n,0.6);}
+  else{yaw=-0.65;pitch=0.5;}
+  pitch=Math.max(-1.4,Math.min(1.4,pitch));
+}
+let drag=null;
+let down=null;
+cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY};down={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  yaw+=(e.clientX-drag.x)*0.008;pitch=Math.max(-1.4,Math.min(1.4,pitch+(e.clientY-drag.y)*0.008));
+  drag={x:e.clientX,y:e.clientY};draw();
+});
+cv.addEventListener('pointerup',e=>{
+  drag=null;
+  if(down&&Math.hypot(e.clientX-down.x,e.clientY-down.y)<5){
+    const b=cv.getBoundingClientRect(),mx=e.clientX-b.left,my=e.clientY-b.top;
+    let best=-1,bd=16;
+    const sc=scene();
+    for(let r=0;r<3;r++){const q=proj(sc.pts[r]),d=Math.hypot(q[0]-mx,q[1]-my);if(d<bd){bd=d;best=r;}}
+    if(best>=0)sc.pick(best);
+  }
+  down=null;
+});
+cv.addEventListener('pointercancel',()=>drag=null);
+
+/* ---------- projection (orthographic, z up, scene centred on the ratings cube) ---------- */
+let W=0,H=0,SC=1;
+const CEN=[2.5,2.5,2.2];
+function resize(){
+  const r=cv.parentElement.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  W=r.width;H=Math.max(520,r.height);
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  SC=Math.min(W,H)/9.5;
+  draw();
+}
+window.addEventListener('resize',resize);
+function proj(p){
+  const a=p[0]-CEN[0],b=p[1]-CEN[1],c=p[2]-CEN[2];
+  const cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+  const x1=a*cy-b*sy,y1=a*sy+b*cy;
+  return [W/2+x1*SC,H/2-(y1*sp+c*cp)*SC];
+}
+function line(a,b,color,w,dash){
+  const p=proj(a),q=proj(b);
+  ctx.strokeStyle=color;ctx.lineWidth=w;ctx.setLineDash(dash||[]);
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.setLineDash([]);
+}
+function arrow(v,color,label,dash){
+  if(norm(v)<0.04)return;
+  const o=proj([0,0,0]),t=proj(v);
+  ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=3;ctx.setLineDash(dash||[]);
+  ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(t[0],t[1]);ctx.stroke();ctx.setLineDash([]);
+  const ang=Math.atan2(t[1]-o[1],t[0]-o[0]);
+  ctx.beginPath();ctx.moveTo(t[0],t[1]);
+  ctx.lineTo(t[0]-12*Math.cos(ang-0.4),t[1]-12*Math.sin(ang-0.4));
+  ctx.lineTo(t[0]-12*Math.cos(ang+0.4),t[1]-12*Math.sin(ang+0.4));
+  ctx.closePath();ctx.fill();
+  ctx.font='600 14px Segoe UI,Roboto,sans-serif';ctx.fillText(label,t[0]+8,t[1]-6);
+}
+function dotAt(p,color,hollow,label){
+  const q=proj(p);
+  ctx.beginPath();ctx.arc(q[0],q[1],hollow?9:6,0,6.283);
+  if(hollow){ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.stroke();}
+  else{ctx.fillStyle=color;ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();}
+  if(label){ctx.fillStyle='#1d1f24';ctx.font='600 14px Segoe UI,Roboto,sans-serif';ctx.fillText(label,q[0]+9,q[1]+5);}
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sc=scene(),V=sc.dirs,sig=dec.sig;
+
+  // movie-space frame: floor grid and the three movie axes with ticks
+  for(let i=0;i<=5;i++){line([i,0,0],[i,5,0],'#ececea',1);line([0,i,0],[5,i,0],'#ececea',1);}
+  [[1,0,0],[0,1,0],[0,0,1]].forEach((e,a)=>{
+    line([0,0,0],scale(e,5.6),'#b9b9b2',1.2);
+    const p=proj(scale(e,5.9));
+    ctx.fillStyle='#6b6f78';ctx.font='13px Segoe UI,Roboto,sans-serif';
+    ctx.textAlign=a===2?'center':'left';ctx.fillText(sc.axes[a],p[0]+(a===2?0:4),p[1]+(a===2?-6:4));ctx.textAlign='left';
+    for(let t=1;t<=5;t++){const o=scale(e,t),w=a===2?[0.08,0,0]:[0,0,0.08];line(sub(o,w),add(o,w),'#b9b9b2',1);}
+  });
+
+  // kept subspace span(v1..vk): line or plane through the origin
+  if(k===1&&sig[0]>1e-9){
+    line(scale(V[0],-1.5),scale(V[0],9),'#3b7dd8',2);
+    for(let t=1;t<=8;t++){const o=scale(V[0],t),w=scale(V[1],0.08);line(sub(o,w),add(o,w),'#3b7dd8',1.2);}
+  }
+  if(k===2&&sig[1]>1e-9){
+    const c0=[2.5,2.5,2.5],u=V[0],v=V[1],L=4.6;
+    const c=add(scale(u,dot(c0,u)),scale(v,dot(c0,v)));
+    for(let i=-4;i<=4;i++){
+      line(add(c,add(scale(u,i),scale(v,-L))),add(c,add(scale(u,i),scale(v,L))),'#dfe8f5',1);
+      line(add(c,add(scale(u,-L),scale(v,i))),add(c,add(scale(u,L),scale(v,i))),'#dfe8f5',1);
+    }
+    const pts=[[1,1],[1,-1],[-1,-1],[-1,1]].map(([s,t])=>proj(add(c,add(scale(u,s*L),scale(v,t*L)))));
+    ctx.fillStyle='rgba(59,125,216,.14)';ctx.strokeStyle='#3b7dd8';ctx.lineWidth=1.2;
+    ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();ctx.fill();ctx.stroke();
+  }
+
+  // singular directions, arrow length σᵢ/√3
+  for(let i=0;i<3;i++){
+    const kept=i<k;
+    arrow(scale(V[i],sig[i]/Math.sqrt(3)),kept?'#3b7dd8':'#d23c3c',sc.sym+'₁₂₃'[i],kept?null:[6,4]);
+  }
+
+  // points (users or movies) and their rank-k versions
+  for(let r=0;r<3;r++){
+    const P=sc.pts[r],Q=sc.apx[r],col=sc.cols[r];
+    line([0,0,0],P,col,1.5,[3,4]);
+    if(projAll||r===sc.sel){line([0,0,0],Q,'#3b7dd8',2);line(P,Q,'#555',2,[5,4]);dotAt(Q,col,true);}
+    dotAt(P,col,false,sc.names[r]);
+  }
+}
+
+/* ---------- tables and readout ---------- */
+const f1=v=>(Math.abs(v)<0.05?0:v).toFixed(1);
+const f2=v=>(Math.abs(v)<5e-3?0:v).toFixed(2);
+const f3=v=>Math.abs(v)<5e-7?'0':v.toFixed(3);
+function update(){
+  const Ak=truncate(dec,k),R=msub(A,Ak),sig=dec.sig;
+  const cls=i=>i<k?'kept':'disc';
+  const sb='₁₂₃',ks=k<3?sb[k-1]:'';
+  const hd=(n,c)=>`<tr><th class="u">${n}</th>`+[0,1,2].map(i=>`<th class="${cls(i)}">${c}${sb[i]}</th>`).join('')+'</tr>';
+  document.getElementById('facT').textContent=`A${ks} = U Σ${ks} Vᵀ`;
+  document.getElementById('tU').innerHTML=hd('U','u')+
+    [0,1,2].map(r=>`<tr><th class="u"><i style="background:${ucol[r]}"></i>${users[r]}</th>${[0,1,2].map(i=>`<td class="${cls(i)}">${f2(dec.U[i][r])}</td>`).join('')}</tr>`).join('');
+  document.getElementById('tS').innerHTML=`<tr><th class="u">Σ${ks}</th><th></th><th></th><th></th></tr>`+
+    [0,1,2].map(r=>`<tr><th class="u"></th>${[0,1,2].map(i=>`<td class="${cls(i)}">${i===r&&i<k?f2(sig[i]):'0'}</td>`).join('')}</tr>`).join('');
+  document.getElementById('tV').innerHTML=hd('V','v')+
+    [0,1,2].map(m=>`<tr><th class="u">${movies[m]}</th>${[0,1,2].map(i=>`<td class="${cls(i)}">${f2(dec.V[i][m])}</td>`).join('')}</tr>`).join('');
+  document.getElementById('read').innerHTML=`
+    <h2>Readout</h2>
+    <div id="rank">rank(A) = ${dec.rank}</div>
+    <table>
+      <tr><td>σ₁, σ₂, σ₃</td><td>${sig.map(f3).join(', ')}</td></tr>
+      <tr><td>‖A − A<sub>k</sub>‖<sub>F</sub></td><td>${f3(fro(R))}</td></tr>
+    </table>`;
+  draw();
+}
+
+loadMatrix();align();resize();update();
+})();
+</script>
+</body>
+</html>

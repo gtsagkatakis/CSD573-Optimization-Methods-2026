@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Eigenvectors of a set of signals</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --blue:#3b7dd8;--x:#e8801a;--c1:#1f5fbf;--c2:#2a9d5c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1320px;margin:0 auto;padding:18px 22px 26px}
+  h1{font-size:22px;font-weight:600;margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:880px){.grid{grid-template-columns:1fr}}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:6px;
+    min-height:520px;height:calc(100vh - 90px);max-height:720px}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px 14px 12px;margin-bottom:12px}
+  .card h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
+  select{font:inherit;width:100%;padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:#fff}
+  .slider{display:grid;grid-template-columns:118px 1fr 44px;gap:8px;align-items:center;font-size:15px}
+  .slider.one{grid-template-columns:1fr 44px}
+  .slider output{text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--blue)}
+  .sx input[type=range]{accent-color:var(--x)}
+  .sx .s1 input[type=range]{accent-color:var(--c1)}
+  .sx .s2 input[type=range]{accent-color:var(--c2)}
+  .sx .slider{margin-bottom:2px}
+  table.read{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:15px}
+  table.read td{padding:3px 0;vertical-align:middle}
+  table.read td:first-child{color:var(--muted);width:150px}
+  .m2{display:inline-grid;grid-template-columns:auto auto;gap:0 14px;text-align:right;
+    border-left:1.5px solid var(--ink);border-right:1.5px solid var(--ink);padding:0 7px;border-radius:3px}
+  .kx{color:var(--x)} .kb{color:var(--blue)} .k1{color:var(--c1)} .k2{color:var(--c2)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Eigenvectors of a set of signals</h1>
+  <div class="grid">
+    <div class="stage"><canvas id="cv"></canvas></div>
+    <div>
+      <div class="card sx">
+        <h2>Signal x</h2>
+        <div class="slider s1"><span class="k1">along v₁</span><input id="w1" type="range" min="-1.5" max="1.5" step="0.01"><output id="w1o"></output></div>
+        <div class="slider s2"><span class="k2">along v₂</span><input id="w2" type="range" min="-1.5" max="1.5" step="0.01"><output id="w2o"></output></div>
+      </div>
+      <div class="card">
+        <h2>Number of eigenvectors k</h2>
+        <div class="slider one"><input id="k" type="range" min="0" max="2" step="1" value="1"><output id="ko"></output></div>
+      </div>
+      <div class="card">
+        <h2>Readout</h2>
+        <table class="read" id="read"></table>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+/*MATH-START*/
+var NP=60,MAXH=2.2;
+function rng32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+// each set: mean (1,1), spread s1 along direction d, spread s2 across it
+var PRESETS=[
+  {g:'One direction of spread',n:'All signals on one line',d:[2,1],s1:0.38,s2:0},
+  {g:'Two directions of spread',n:'Peaks rise together',d:[1,1],s1:0.40,s2:0.12},
+  {g:'Two directions of spread',n:'One rises as the other falls',d:[1,-1],s1:0.40,s2:0.12},
+  {g:'Two directions of spread',n:'Mostly the left peak varies',d:[1,0],s1:0.40,s2:0.12},
+  {g:'Two directions of spread',n:'Unrelated heights, equal spread',d:[1,0],s1:0.25,s2:0.25}
+];
+function cloud(p,seed){
+  var r=rng32(seed),g=function(){var u=Math.max(1e-12,r()),v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);};
+  var L=Math.hypot(p.d[0],p.d[1]),d=[p.d[0]/L,p.d[1]/L],q=[-d[1],d[0]],P=[];
+  for(var i=0;i<NP;i++){var a=p.s1*g(),b=p.s2*g();
+    P.push([Math.max(0.05,Math.min(MAXH-0.05,1+a*d[0]+b*q[0])),Math.max(0.05,Math.min(MAXH-0.05,1+a*d[1]+b*q[1]))]);}
+  return P;
+}
+function eigen(P){                 // mean, 2x2 covariance, its eigenvalues and eigenvectors
+  var n=P.length,m=[0,0],i;for(i=0;i<n;i++){m[0]+=P[i][0]/n;m[1]+=P[i][1]/n;}
+  var a=0,b=0,c=0;for(i=0;i<n;i++){var u=P[i][0]-m[0],v=P[i][1]-m[1];a+=u*u/n;b+=u*v/n;c+=v*v/n;}
+  var ph=(Math.abs(b)<1e-14&&Math.abs(a-c)<1e-14)?0:0.5*Math.atan2(2*b,a-c),cs=Math.cos(ph),sn=Math.sin(ph);
+  var v1=[cs,sn];if(v1[0]<-1e-9||(Math.abs(v1[0])<=1e-9&&v1[1]<0))v1=[-cs,-sn];
+  var v2=[-v1[1],v1[0]];
+  var l1=a*cs*cs+2*b*cs*sn+c*sn*sn,l2=a*sn*sn-2*b*cs*sn+c*cs*cs;
+  return {mean:m,C:[[a,b],[b,c]],val:[Math.max(0,l1),Math.max(0,l2)],v1:v1,v2:v2};
+}
+function weightsOf(E,x){var u=x[0]-E.mean[0],v=x[1]-E.mean[1];return [u*E.v1[0]+v*E.v1[1],u*E.v2[0]+v*E.v2[1]];}
+function rebuild(E,w,k){
+  var r=E.mean.slice();
+  if(k>=1){r[0]+=w[0]*E.v1[0];r[1]+=w[0]*E.v1[1];}
+  if(k>=2){r[0]+=w[1]*E.v2[0];r[1]+=w[1]*E.v2[1];}
+  return r;
+}
+/*MATH-END*/
+
+var $=function(id){return document.getElementById(id);};
+var cv=$('cv'),ctx=cv.getContext('2d'),W=0,H=0;
+var pi=1,P=cloud(PRESETS[pi],11+pi),E=eigen(P),x=[1.55,0.75],k=1,PL=null,dots=[];
+var FONT='"Segoe UI",Roboto,Arial,sans-serif',NS=120;
+
+
+function f2(v){var t=Math.abs(v)<0.005?0:v;return t.toFixed(2);}
+function f3(v){var t=Math.abs(v)<0.0005?0:v;return t.toFixed(3);}
+function resize(){
+  var r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  W=r.width;H=r.height;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);draw();
+}
+function sig(h,t){return h[0]*Math.exp(-0.5*Math.pow((t-0.3)/0.08,2))+h[1]*Math.exp(-0.5*Math.pow((t-0.7)/0.08,2));}
+function drawSignal(R,rec){
+  var lo=-0.15,hi=2.4,px=R.x+34,pw=R.w-40,py=R.y+30,ph=R.h-60,i;
+  var Y=function(v){return py+(hi-v)/(hi-lo)*ph;};
+  ctx.font='13px '+FONT;ctx.textAlign='right';ctx.textBaseline='middle';
+  [0,0.5,1,1.5,2].forEach(function(t){
+    ctx.strokeStyle=t===0?'#b9bcc4':'#ececE6';ctx.lineWidth=t===0?1.2:1;
+    ctx.beginPath();ctx.moveTo(px,Y(t));ctx.lineTo(px+pw,Y(t));ctx.stroke();ctx.fillStyle='#6b6f78';ctx.fillText(t.toFixed(1),px-6,Y(t));
+  });
+  [[x,'#e8801a',3],[rec,'#3b7dd8',2.2]].forEach(function(c){
+    ctx.strokeStyle=c[1];ctx.lineWidth=c[2];ctx.lineJoin='round';ctx.beginPath();
+    for(i=0;i<=NS;i++){var t=i/NS,X=px+t*pw,yy=Y(sig(c[0],t));if(i)ctx.lineTo(X,yy);else ctx.moveTo(X,yy);}
+    ctx.stroke();
+  });
+  ctx.fillStyle='#6b6f78';ctx.textAlign='center';ctx.textBaseline='top';
+  ctx.fillText('left peak',px+0.3*pw,py+ph+8);ctx.fillText('right peak',px+0.7*pw,py+ph+8);
+  ctx.font='600 14px '+FONT;ctx.textAlign='left';ctx.textBaseline='bottom';
+  ctx.fillStyle='#e8801a';ctx.fillText('signal x',px,py-6);
+  ctx.fillStyle='#3b7dd8';ctx.fillText(k===0?'mean signal':('mean + '+k+' eigenvector'+(k===1?'':'s')),px+78,py-6);
+}
+function S(p){return [PL.x0+p[0]*PL.sc,PL.y0-p[1]*PL.sc];}
+function seg(a,b,col,lw,dash){
+  var p=S(a),q=S(b);ctx.save();ctx.strokeStyle=col;ctx.lineWidth=lw;if(dash)ctx.setLineDash(dash);
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.restore();
+}
+function arrow(a,b,col,lw,label){
+  var o=S(a),p=S(b),dx=p[0]-o[0],dy=p[1]-o[1],L=Math.hypot(dx,dy);
+  ctx.save();ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=lw;
+  var ux=L<2?0.7:dx/L,uy=L<2?-0.7:dy/L;
+  if(L<2){ctx.beginPath();ctx.arc(o[0],o[1],lw+1.5,0,7);ctx.fill();}
+  else{
+    var h=Math.min(13,L*0.6);
+    ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(p[0]-ux*h*0.8,p[1]-uy*h*0.8);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(p[0]-ux*h-uy*h*0.45,p[1]-uy*h+ux*h*0.45);
+    ctx.lineTo(p[0]-ux*h+uy*h*0.45,p[1]-uy*h-ux*h*0.45);ctx.closePath();ctx.fill();
+  }
+  if(label){ctx.font='600 15px '+FONT;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,p[0]+ux*16,p[1]+uy*16);}
+  ctx.restore();
+}
+function drawPlane(R,w,rec){
+  var side=Math.min(R.w-60,R.h-70),sc=side/MAXH;
+  PL={x0:R.x+(R.w-side)/2+18,y0:R.y+(R.h-side)/2+side-6,sc:sc,side:side};
+  var i;
+  ctx.font='13px '+FONT;
+  for(i=0;i<=4;i++){
+    var t=i*0.5;seg([t,0],[t,MAXH],t===0?'#b9bcc4':'#ececE6',t===0?1.3:1);seg([0,t],[MAXH,t],t===0?'#b9bcc4':'#ececE6',t===0?1.3:1);
+    var a=S([t,0]),b=S([0,t]);ctx.fillStyle='#6b6f78';
+    ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText(t.toFixed(1),a[0],a[1]+6);
+    if(i){ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(t.toFixed(1),b[0]-8,b[1]);}
+  }
+  var c=S([MAXH/2,0]);ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle='#6b6f78';ctx.fillText('left peak height',c[0],c[1]+26);
+  c=S([0,MAXH/2]);ctx.save();ctx.translate(c[0]-40,c[1]);ctx.rotate(-Math.PI/2);ctx.textBaseline='bottom';ctx.fillText('right peak height',0,0);ctx.restore();
+  // clip to the plot square
+  ctx.save();var tl=S([0,MAXH]);ctx.beginPath();ctx.rect(tl[0]-1,tl[1]-1,side+2,side+2);ctx.clip();
+  dots=[];
+  P.forEach(function(p,j){var q=S(p);dots.push({i:j,X:q[0],Y:q[1]});
+    ctx.fillStyle='rgba(90,96,108,.5)';ctx.beginPath();ctx.arc(q[0],q[1],4,0,7);ctx.fill();});
+  var m=E.mean,s1=Math.sqrt(E.val[0]),s2=Math.sqrt(E.val[1]),v1=E.v1,v2=E.v2,far=4;
+  // directions kept by the first k eigenvectors
+  if(k>=1)seg([m[0]-far*v1[0],m[1]-far*v1[1]],[m[0]+far*v1[0],m[1]+far*v1[1]],'#3b7dd8',1.2);
+  if(k>=2)seg([m[0]-far*v2[0],m[1]-far*v2[1]],[m[0]+far*v2[0],m[1]+far*v2[1]],'#3b7dd8',1.2);
+  // x as mean + w1 v1 + w2 v2, head to tail
+  var mid=[m[0]+w[0]*v1[0],m[1]+w[0]*v1[1]];
+  seg(m,mid,'#1f5fbf',1.6,k>=1?null:[5,4]);
+  seg(mid,x,'#2a9d5c',1.6,k>=2?null:[5,4]);
+  // eigenvectors, length = spread of the set along them
+  arrow(m,[m[0]+s2*v2[0],m[1]+s2*v2[1]],'#2a9d5c',3.2,'v₂');
+  arrow(m,[m[0]+s1*v1[0],m[1]+s1*v1[1]],'#1f5fbf',3.2,'v₁');
+  var q=S(m);ctx.fillStyle='#1d1f24';ctx.beginPath();ctx.arc(q[0],q[1],4.5,0,7);ctx.fill();
+  q=S(rec);ctx.fillStyle='#3b7dd8';ctx.beginPath();ctx.arc(q[0],q[1],6,0,7);ctx.fill();
+  q=S(x);ctx.fillStyle='#fff';ctx.strokeStyle='#e8801a';ctx.lineWidth=2.6;ctx.beginPath();ctx.arc(q[0],q[1],7.5,0,7);ctx.fill();ctx.stroke();
+  ctx.restore();
+}
+function draw(){
+  if(!W)return;
+  ctx.clearRect(0,0,W,H);
+  var w=weightsOf(E,x),rec=rebuild(E,w,k),side=W>=700,RS,RP;
+  if(side){RS={x:14,y:14,w:W*0.44-18,h:H-28};RP={x:W*0.44,y:14,w:W*0.56-14,h:H-28};}
+  else{RS={x:12,y:10,w:W-24,h:H*0.38};RP={x:12,y:H*0.38+10,w:W-24,h:H*0.62-20};}
+  drawSignal(RS,rec);drawPlane(RP,w,rec);readout(w,rec);
+}
+function m2(M){return '<span class="m2"><span>'+f3(M[0][0])+'</span><span>'+f3(M[0][1])+'</span><span>'+f3(M[1][0])+'</span><span>'+f3(M[1][1])+'</span></span>';}
+function readout(w,rec){
+  var rows=[
+    ['signals in the set',NP],
+    ['mean','('+f2(E.mean[0])+', '+f2(E.mean[1])+')'],
+    ['covariance C',m2(E.C)],
+    ['<span class="k1">λ₁, v₁</span>','<span class="k1">'+f3(E.val[0])+', ('+f2(E.v1[0])+', '+f2(E.v1[1])+')</span>'],
+    ['<span class="k2">λ₂, v₂</span>','<span class="k2">'+f3(E.val[1])+', ('+f2(E.v2[0])+', '+f2(E.v2[1])+')</span>'],
+    ['v₁ᵀv₂',f2(E.v1[0]*E.v2[0]+E.v1[1]*E.v2[1])],
+    ['<span class="kx">x</span>','<span class="kx">('+f2(x[0])+', '+f2(x[1])+')</span>'],
+    ['weights of x','(<span class="k1">'+f2(w[0])+'</span>, <span class="k2">'+f2(w[1])+'</span>)'],
+    ['<span class="kb">built from k</span>','<span class="kb">('+f2(rec[0])+', '+f2(rec[1])+')</span>'],
+    ['distance from x',f2(Math.hypot(x[0]-rec[0],x[1]-rec[1]))]
+  ];
+  $('read').innerHTML=rows.map(function(r){return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';}).join('');
+  $('ko').textContent=k;
+  $('w1o').textContent=f2(w[0]);$('w2o').textContent=f2(w[1]);
+}
+function sync(){var w=weightsOf(E,x);$('w1').value=w[0];$('w2').value=w[1];}
+function clampX(){x=[Math.max(0,Math.min(MAXH,x[0])),Math.max(0,Math.min(MAXH,x[1]))];}
+$('k').addEventListener('input',function(){k=+this.value;draw();});
+['w1','w2'].forEach(function(id,i){$(id).addEventListener('input',function(){
+  var w=weightsOf(E,x);w[i]=+this.value;x=rebuild(E,w,2);clampX();sync();draw();
+});});
+var down=null;
+function local(e){var r=cv.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];}
+function toData(p){return [Math.max(0,Math.min(MAXH,Math.round((p[0]-PL.x0)/PL.sc*100)/100)),Math.max(0,Math.min(MAXH,Math.round((PL.y0-p[1])/PL.sc*100)/100))];}
+function inPlane(p){return PL&&p[0]>=PL.x0-10&&p[0]<=PL.x0+PL.side+10&&p[1]<=PL.y0+10&&p[1]>=PL.y0-PL.side-10;}
+function onX(p){if(!PL)return false;var q=S(x);return Math.hypot(p[0]-q[0],p[1]-q[1])<16;}
+cv.addEventListener('pointerdown',function(e){
+  var p=local(e);if(!inPlane(p))return;down={p:p,drag:onX(p),moved:0,last:p};cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointermove',function(e){
+  var p=local(e);
+  if(!down){cv.style.cursor=onX(p)?'move':(inPlane(p)?'pointer':'default');return;}
+  down.moved+=Math.abs(p[0]-down.last[0])+Math.abs(p[1]-down.last[1]);down.last=p;
+  if(down.drag){x=toData(p);sync();draw();}
+});
+cv.addEventListener('pointerup',function(){
+  if(down&&!down.drag&&down.moved<5){
+    var best=-1,bd=14;dots.forEach(function(q){var d=Math.hypot(q.X-down.p[0],q.Y-down.p[1]);if(d<bd){bd=d;best=q.i;}});
+    if(best>=0){x=P[best].slice();sync();draw();}
+  }
+  down=null;
+});
+cv.addEventListener('pointercancel',function(){down=null;});
+window.addEventListener('resize',resize);
+sync();resize();
+</script>
+</body>
+</html>

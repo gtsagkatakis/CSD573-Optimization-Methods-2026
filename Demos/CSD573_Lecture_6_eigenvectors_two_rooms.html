@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CS-573 · Eigenvectors: two rooms</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --blue:#3b7dd8;--x:#e8801a;--c1:#1f5fbf;--c2:#2a9d5c}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:18px 22px 26px}
+  h1{font-size:22px;font-weight:600;margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:880px){.grid{grid-template-columns:1fr}}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:6px;
+    min-height:520px;height:calc(100vh - 90px);max-height:760px}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+  .legend{position:absolute;left:12px;bottom:8px;font-size:13px;color:var(--muted);pointer-events:none}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px 14px 12px;margin-bottom:12px}
+  .card h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
+  select{font:inherit;width:100%;padding:5px 6px;border:1px solid var(--rule);border-radius:5px;background:#fff;margin-bottom:8px}
+  .slider{display:grid;grid-template-columns:118px 1fr 44px;gap:8px;align-items:center;font-size:15px}
+  .slider output{text-align:right;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--ink)}
+  .sx input[type=range]{accent-color:var(--x)}
+  table.read{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:15px}
+  table.read td{padding:3px 0;vertical-align:top}
+  table.read td:first-child{color:var(--muted);width:150px}
+  .m2{display:inline-grid;grid-template-columns:auto auto;gap:0 14px;text-align:right;margin-top:8px;
+    border-left:1.5px solid var(--ink);border-right:1.5px solid var(--ink);padding:0 7px;border-radius:3px;
+    font-variant-numeric:tabular-nums}
+  .kx{color:var(--x)} .kb{color:var(--blue)} .k1{color:var(--c1)} .k2{color:var(--c2)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Eigenvectors: two rooms</h1>
+  <div class="grid">
+    <div class="stage"><canvas id="cv"></canvas>
+      <div class="legend">orange: now (x) · blue: one hour later (Ax) · dashed: invariant directions</div></div>
+    <div>
+      <div class="card">
+        <h2>Process A: one hour of heat flow</h2>
+        <div class="slider"><span>leak to outside</span><input id="leak" type="range" min="0" max="0.3" step="0.01" value="0.1"><output id="leako"></output></div>
+        <div class="slider"><span>through the wall</span><input id="wall" type="range" min="0" max="0.3" step="0.01" value="0.2"><output id="wallo"></output></div>
+        <div class="m2" id="amat"></div>
+      </div>
+      <div class="card sx">
+        <h2>State x: temperatures relative to outside</h2>
+        <select id="preset"></select>
+        <div class="slider"><span>room 1</span><input id="x1" type="range" min="-10" max="10" step="0.5"><output id="x1o"></output></div>
+        <div class="slider"><span>room 2</span><input id="x2" type="range" min="-10" max="10" step="0.5"><output id="x2o"></output></div>
+      </div>
+      <div class="card">
+        <h2>Readout</h2>
+        <table class="read" id="read"></table>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+/*MATH-START*/
+function makeA(leak,wall){var d=1-leak-wall;return [[d,wall],[wall,d]];}
+function mul(M,x){return [M[0][0]*x[0]+M[0][1]*x[1],M[1][0]*x[0]+M[1][1]*x[1]];}
+function analyse(A,x){
+  var y=mul(A,x),nx=Math.hypot(x[0],x[1]),ny=Math.hypot(y[0],y[1]),d=x[0]*y[0]+x[1]*y[1];
+  var lam=nx>1e-12?d/(nx*nx):0,res=Math.hypot(y[0]-lam*x[0],y[1]-lam*x[1]);
+  var c=(nx>1e-12&&ny>1e-12)?Math.max(-1,Math.min(1,d/(nx*ny))):null;
+  return {y:y,nx:nx,ny:ny,lam:lam,eig:nx>1e-12&&res<1e-9*nx,
+          angle:c===null?null:Math.acos(c)*180/Math.PI,
+          r1:Math.abs(x[0])>1e-9?y[0]/x[0]:null,r2:Math.abs(x[1])>1e-9?y[1]/x[1]:null};
+}
+var PRESETS=[
+  {g:'Typical',n:'Only room 1 warm',x:[8,0]},
+  {g:'Typical',n:'Room 1 warmer than room 2',x:[8,3]},
+  {g:'Typical',n:'Room 1 warm, room 2 slightly cold',x:[8,-2]},
+  {g:'Typical',n:'Only room 2 cold',x:[0,-7]},
+  {g:'Invariant',n:'Both equally warm',x:[6,6]},
+  {g:'Invariant',n:'Both equally cold',x:[-6,-6]},
+  {g:'Invariant',n:'Room 1 warm, room 2 equally cold',x:[6,-6]},
+  {g:'Invariant',n:'Room 1 cold, room 2 equally warm',x:[-4,4]}
+];
+/*MATH-END*/
+
+var $=function(id){return document.getElementById(id);};
+var cv=$('cv'),ctx=cv.getContext('2d'),W=0,H=0;
+var leak=0.1,wall=0.2,x=[8,0],EXT=11,plane=null;
+var FONT='"Segoe UI",Roboto,Arial,sans-serif';
+
+(function(){
+  var sel=$('preset'),groups={};
+  PRESETS.forEach(function(p,i){
+    if(!groups[p.g]){groups[p.g]=document.createElement('optgroup');groups[p.g].label=p.g;sel.appendChild(groups[p.g]);}
+    var o=document.createElement('option');o.value=i;o.textContent=p.n;groups[p.g].appendChild(o);
+  });
+  var e=document.createElement('option');e.value='edited';e.textContent='Edited';e.hidden=true;sel.appendChild(e);
+  sel.value=0;
+})();
+
+function f2(v){var t=Math.abs(v)<0.005?0:v;return t.toFixed(2);}
+function deg(v){var t=Math.abs(v)<0.05?0:v;return (t>0?'+':'')+t.toFixed(1)+'°';}
+function heat(t){
+  var a=Math.min(1,Math.abs(t)/10),c=t>=0?[210,60,60]:[59,125,216];
+  return 'rgb('+Math.round(255+(c[0]-255)*a)+','+Math.round(255+(c[1]-255)*a)+','+Math.round(255+(c[2]-255)*a)+')';
+}
+function resize(){
+  var r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  W=r.width;H=r.height;cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);draw();
+}
+function rooms(R,v,label,col){
+  // R = {x,y,s}: two squares of side s starting at (x,y)
+  ctx.save();
+  ctx.font='600 15px '+FONT;ctx.fillStyle=col;ctx.textAlign='left';ctx.textBaseline='bottom';
+  ctx.fillText(label,R.x,R.y-8);
+  for(var i=0;i<2;i++){
+    var X=R.x+i*R.s;
+    ctx.fillStyle=heat(v[i]);ctx.fillRect(X,R.y,R.s,R.s);
+    ctx.fillStyle='#1d1f24';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.font='600 '+Math.round(R.s*0.2)+'px '+FONT;ctx.fillText(deg(v[i]),X+R.s/2,R.y+R.s/2);
+    ctx.font='13px '+FONT;ctx.fillStyle='#6b6f78';ctx.fillText('room '+(i+1),X+R.s/2,R.y+R.s-13);
+  }
+  ctx.strokeStyle='#1d1f24';ctx.lineWidth=2.5;ctx.strokeRect(R.x,R.y,2*R.s,R.s);
+  ctx.beginPath();ctx.moveTo(R.x+R.s,R.y);ctx.lineTo(R.x+R.s,R.y+R.s);ctx.stroke();
+  ctx.restore();
+}
+function P(v){return [plane.cx+v[0]*plane.sc,plane.cy-v[1]*plane.sc];}
+function seg(a,b,col,lw,dash){
+  var p=P(a),q=P(b);ctx.save();ctx.strokeStyle=col;ctx.lineWidth=lw;if(dash)ctx.setLineDash(dash);
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(q[0],q[1]);ctx.stroke();ctx.restore();
+}
+function arrow(v,col,lw){
+  var o=P([0,0]),p=P(v),dx=p[0]-o[0],dy=p[1]-o[1],L=Math.hypot(dx,dy);
+  ctx.save();ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=lw;
+  if(L<3){ctx.beginPath();ctx.arc(o[0],o[1],lw+2,0,7);ctx.fill();ctx.restore();return;}
+  var ux=dx/L,uy=dy/L,h=Math.min(13,L*0.6);
+  ctx.beginPath();ctx.moveTo(o[0],o[1]);ctx.lineTo(p[0]-ux*h*0.8,p[1]-uy*h*0.8);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(p[0],p[1]);ctx.lineTo(p[0]-ux*h-uy*h*0.45,p[1]-uy*h+ux*h*0.45);
+  ctx.lineTo(p[0]-ux*h+uy*h*0.45,p[1]-uy*h-ux*h*0.45);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function draw(){
+  if(!W)return;
+  ctx.clearRect(0,0,W,H);
+  var A=makeA(leak,wall),S=analyse(A,x),side=W>=640;
+  // regions
+  var rw=side?W*0.36:W,rh=side?H-30:H*0.36;
+  var pw=side?W-rw:W,ph=side?H-30:H-rh-30,pxo=side?rw:0,pyo=side?0:rh;
+  // rooms
+  var s,R1,R2;
+  if(side){
+    s=Math.min((rw-50)/2,(rh-110)/2);
+    var x0=(rw-2*s)/2+8,y0=(rh-(2*s+64))/2+30;
+    R1={x:x0,y:y0,s:s};R2={x:x0,y:y0+s+64,s:s};
+  }else{
+    s=Math.min((rw-90)/4,rh-60);
+    var gx=(rw-4*s)/3,yy=(rh-s)/2+14;
+    R1={x:gx,y:yy,s:s};R2={x:2*gx+2*s,y:yy,s:s};
+  }
+  rooms(R1,x,'now',  '#e8801a');
+  rooms(R2,S.y,'one hour later','#3b7dd8');
+  // plane
+  var half=Math.min(pw-70,ph-50)/2;
+  plane={cx:pxo+pw/2+6,cy:pyo+ph/2+6,sc:half/EXT};
+  var i;
+  for(i=-10;i<=10;i+=2){
+    var col=i===0?'#b9bcc4':'#ececE6',lw=i===0?1.3:1;
+    seg([i,-EXT],[i,EXT],col,lw);seg([-EXT,i],[EXT,i],col,lw);
+  }
+  ctx.save();ctx.font='13px '+FONT;ctx.fillStyle='#6b6f78';ctx.textBaseline='middle';
+  ctx.textAlign='center';
+  for(i=-10;i<=10;i+=5){if(i===0)continue;var t=P([i,0]);ctx.fillText(i,t[0],t[1]+13);t=P([0,i]);ctx.fillText(i,t[0]-14,t[1]);}
+  var e=P([EXT,0]);ctx.textAlign='right';ctx.fillText('room 1',e[0],e[1]-12);
+  e=P([0,EXT]);ctx.textAlign='left';ctx.fillText('room 2',e[0]+8,e[1]+6);
+  ctx.restore();
+  seg([-EXT,-EXT],[EXT,EXT],'#1f5fbf',1.6,[6,5]);
+  seg([-EXT,EXT],[EXT,-EXT],'#2a9d5c',1.6,[6,5]);
+  seg(x,S.y,'#555',1.2,[4,4]);
+  arrow(x,'#e8801a',3);
+  arrow(S.y,'#3b7dd8',3);
+  var px=P(x);ctx.save();ctx.fillStyle='#fff';ctx.strokeStyle='#e8801a';ctx.lineWidth=2.2;
+  ctx.beginPath();ctx.arc(px[0],px[1],7,0,7);ctx.fill();ctx.stroke();ctx.restore();
+  readout(A,S);
+}
+function readout(A,S){
+  var rows=[
+    ['<span class="kx">x</span> (now)','<span class="kx">('+f2(x[0])+', '+f2(x[1])+')</span>'],
+    ['<span class="kb">Ax</span> (one hour later)','<span class="kb">('+f2(S.y[0])+', '+f2(S.y[1])+')</span>'],
+    ['angle between x, Ax',S.angle===null?'–':S.angle.toFixed(1)+'°'],
+    ['room 1: after / now',S.r1===null?'–':f2(S.r1)],
+    ['room 2: after / now',S.r2===null?'–':f2(S.r2)],
+    ['λ',S.eig?f2(S.lam):'–'],
+    ['<span class="k1">λ along (1, 1)</span>','<span class="k1">'+f2(1-leak)+'</span>'],
+    ['<span class="k2">λ along (1, −1)</span>','<span class="k2">'+f2(1-leak-2*wall)+'</span>']
+  ];
+  $('read').innerHTML=rows.map(function(r){return '<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>';}).join('');
+  $('leako').textContent=leak.toFixed(2);$('wallo').textContent=wall.toFixed(2);
+  $('x1o').textContent=x[0].toFixed(1);$('x2o').textContent=x[1].toFixed(1);
+  $('amat').innerHTML='<span>'+f2(A[0][0])+'</span><span>'+f2(A[0][1])+'</span><span>'+f2(A[1][0])+'</span><span>'+f2(A[1][1])+'</span>';
+}
+function syncSliders(){$('x1').value=x[0];$('x2').value=x[1];}
+$('preset').addEventListener('change',function(){
+  if(this.value==='edited')return;x=PRESETS[+this.value].x.slice();syncSliders();draw();
+});
+$('leak').addEventListener('input',function(){leak=+this.value;draw();});
+$('wall').addEventListener('input',function(){wall=+this.value;draw();});
+['x1','x2'].forEach(function(id,i){$(id).addEventListener('input',function(){x[i]=+this.value;$('preset').value='edited';draw();});});
+var dragging=false;
+function inPlane(e){
+  var r=cv.getBoundingClientRect(),X=e.clientX-r.left,Y=e.clientY-r.top;
+  return [(X-plane.cx)/plane.sc,-(Y-plane.cy)/plane.sc];
+}
+function setX(e){
+  var v=inPlane(e);
+  x=[Math.max(-10,Math.min(10,Math.round(v[0]*2)/2)),Math.max(-10,Math.min(10,Math.round(v[1]*2)/2))];
+  syncSliders();$('preset').value='edited';draw();
+}
+cv.addEventListener('pointerdown',function(e){
+  if(!plane)return;var v=inPlane(e);if(Math.abs(v[0])>EXT+0.5||Math.abs(v[1])>EXT+0.5)return;
+  dragging=true;cv.setPointerCapture(e.pointerId);setX(e);
+});
+cv.addEventListener('pointermove',function(e){
+  if(dragging){setX(e);return;}
+  if(!plane)return;var v=inPlane(e);cv.style.cursor=(Math.abs(v[0])<=EXT&&Math.abs(v[1])<=EXT)?'grab':'default';
+});
+function end(){dragging=false;}
+cv.addEventListener('pointerup',end);cv.addEventListener('pointercancel',end);
+window.addEventListener('resize',resize);
+syncSliders();resize();
+</script>
+</body>
+</html>
