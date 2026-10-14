@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVD truncation</title>
+<style>
+  :root{--bg:#fbfbf9;--ink:#1d1f24;--muted:#6b6f78;--line:#dcdcd6;--blue:#3b7dd8;--red:#d23c3c;--orange:#e8801a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px}
+  header h1{margin:0;font-size:22px;font-weight:600}
+  main{padding:12px 24px 24px}
+  .stage{min-height:520px;background:#fff;border:1px solid var(--line);border-radius:6px;padding:16px;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(300px,1fr);gap:24px;align-items:start}
+  @media (max-width:900px){.stage{grid-template-columns:1fr}}
+  #heat{width:100%;height:600px;display:block}
+  .right{display:flex;flex-direction:column;gap:14px;padding-top:12px}
+  #bars{width:100%;height:340px;display:block}
+  .slider{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center}
+  .slider output{font-variant-numeric:tabular-nums;min-width:2ch;text-align:right}
+  input[type=range]{width:100%;accent-color:var(--orange)}
+  .ro{font-variant-numeric:tabular-nums;font-size:16px;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin-top:6px}
+  .ro span:nth-child(odd){color:var(--muted)}
+</style>
+</head>
+<body>
+<header><h1>SVD truncation</h1></header>
+<main>
+  <section class="stage">
+    <canvas id="heat"></canvas>
+    <div class="right">
+      <canvas id="bars"></canvas>
+      <div class="slider"><label for="k">k</label><input type="range" id="k" min="0" max="20" step="1" value="20"><output id="kOut">20</output></div>
+      <div class="ro" id="ro"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const m = 20, n = 20;
+
+// ---------- deterministic generator ----------
+function rng(seed){let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};}
+function lowRank(r,seed,noise){ // sum of r rank-one patterns, scaled so max entry = 5
+  const R=rng(seed);
+  const U=Array.from({length:m},()=>Array.from({length:r},()=>R()));
+  const V=Array.from({length:r},()=>Array.from({length:n},()=>R()));
+  const A=Array.from({length:m},(_,i)=>Array.from({length:n},(_,j)=>{let t=0;for(let q=0;q<r;q++)t+=U[i][q]*V[q][j];return t;}));
+  const mx=Math.max(...A.map(r=>Math.max(...r)));
+  for(let i=0;i<m;i++)for(let j=0;j<n;j++)A[i][j]*=5/mx;
+  if(noise){for(let i=0;i<m;i++)for(let j=0;j<n;j++)A[i][j]=Math.max(0,Math.min(5,A[i][j]+noise*(R()-0.5)*2));}
+  return A;
+}
+function blocks(seed,noise){ // 3 user groups × 3 movie genres, block-constant
+  const R=rng(seed);
+  const gU=[0,0,0,0,0,0,0,1,1,1,1,1,1,2,2,2,2,2,2,2], gM=[0,0,0,0,0,0,1,1,1,1,1,1,1,2,2,2,2,2,2,2];
+  const T=[[5,1,2],[1,5,3],[2,3,5]];
+  const A=Array.from({length:m},(_,i)=>Array.from({length:n},(_,j)=>T[gU[i]][gM[j]]+(noise?noise*(R()-0.5)*2:0)));
+  return A.map(r=>r.map(v=>Math.max(0,Math.min(5,v))));
+}
+function smooth(seed){ // smooth surface: a few low-frequency cosines
+  const A=Array.from({length:m},(_,i)=>Array.from({length:n},(_,j)=>{
+    const x=i/(m-1),y=j/(n-1);
+    return 2.5+1.6*Math.cos(2.2*x+1.0)*Math.cos(1.8*y)+0.9*Math.sin(4.5*x)*Math.cos(3.1*y+0.4)+0.4*Math.cos(7*x)*Math.sin(6*y);}));
+  return A.map(r=>r.map(v=>Math.max(0,Math.min(5,v))));
+}
+function random(seed){const R=rng(seed);return Array.from({length:m},()=>Array.from({length:n},()=>5*R()));} // i.i.d. uniform on [0,5]
+
+
+// ---------- linear algebra ----------
+function svd(A){ // one-sided Jacobi, A is m×n with m>=n; returns {U (m×n), s (n), V (n×n)} sorted desc
+  const U = A.map(r=>r.slice());
+  const V = Array.from({length:n},(_,i)=>Array.from({length:n},(_,j)=>i===j?1:0));
+  for(let sweep=0;sweep<80;sweep++){
+    let off=0;
+    for(let p=0;p<n-1;p++) for(let q=p+1;q<n;q++){
+      let a=0,b=0,c=0;
+      for(let i=0;i<m;i++){a+=U[i][p]*U[i][p];b+=U[i][q]*U[i][q];c+=U[i][p]*U[i][q];}
+      if(Math.abs(c)<1e-15) continue;
+      off=Math.max(off,Math.abs(c)/Math.sqrt(a*b+1e-300));
+      const z=(b-a)/(2*c), t=Math.sign(z||1)/(Math.abs(z)+Math.sqrt(1+z*z));
+      const cs=1/Math.sqrt(1+t*t), sn=cs*t;
+      for(let i=0;i<m;i++){const x=U[i][p],y=U[i][q];U[i][p]=cs*x-sn*y;U[i][q]=sn*x+cs*y;}
+      for(let i=0;i<n;i++){const x=V[i][p],y=V[i][q];V[i][p]=cs*x-sn*y;V[i][q]=sn*x+cs*y;}
+    }
+    if(off<1e-13) break;
+  }
+  const s=[];
+  for(let j=0;j<n;j++){let t=0;for(let i=0;i<m;i++)t+=U[i][j]*U[i][j];s.push(Math.sqrt(t));}
+  const idx=[...Array(n).keys()].sort((i,j)=>s[j]-s[i]);
+  const Us=Array.from({length:m},()=>Array(n).fill(0)), Vs=Array.from({length:n},()=>Array(n).fill(0)), ss=[];
+  idx.forEach((j,k)=>{ss.push(s[j]);for(let i=0;i<m;i++)Us[i][k]=s[j]>1e-12?U[i][j]/s[j]:0;for(let i=0;i<n;i++)Vs[i][k]=V[i][j];});
+  return {U:Us,s:ss,V:Vs};
+}
+function truncate(S,k){
+  const B=Array.from({length:m},()=>Array(n).fill(0));
+  for(let j=0;j<k;j++)for(let i=0;i<m;i++)for(let l=0;l<n;l++)B[i][l]+=S.s[j]*S.U[i][j]*S.V[l][j];
+  return B;
+}
+function sub(A,B){return A.map((r,i)=>r.map((v,j)=>v-B[i][j]));}
+function fro(A){let t=0;for(const r of A)for(const v of r)t+=v*v;return Math.sqrt(t);}
+function rank(s){const tol=1e-7*(s[0]||1);return s.filter(v=>v>tol).length;}
+
+// ---------- state ----------
+let A = random(18); // i.i.d. uniform entries, full rank
+let k = 20, S=null;
+
+// ---------- UI ----------
+
+const kIn=document.getElementById('k'), kOut=document.getElementById('kOut');
+kIn.addEventListener('input',()=>{k=+kIn.value;update();});
+
+// ---------- drawing ----------
+// plasma (sampled), t in [0,1]
+const VIR=[[13,8,135],[75,3,161],[125,3,168],[168,34,150],[203,70,121],[229,107,93],[248,148,65],[253,195,40],[240,249,33]];
+function cmap(t){t=Math.max(0,Math.min(1,t));const x=t*(VIR.length-1),i=Math.min(VIR.length-2,Math.floor(x)),f=x-i;
+  const c=VIR[i].map((v,q)=>Math.round(v+(VIR[i+1][q]-v)*f));return `rgb(${c[0]},${c[1]},${c[2]})`;}
+let range=[0,5];
+function computeRange(){ // over A_k for every k, so the bar is stable while k moves
+  let lo=Infinity,hi=-Infinity;
+  for(let kk=0;kk<=n;kk++){const B=truncate(S,kk);for(const r of B)for(const v of r){if(v<lo)lo=v;if(v>hi)hi=v;}}
+  range=[Math.floor(lo*2)/2,Math.ceil(hi*2)/2];
+}
+function fit(c){const d=window.devicePixelRatio||1,r=c.getBoundingClientRect();const W=Math.max(1,Math.round(r.width*d)),H=Math.max(1,Math.round(r.height*d));if(c.width!==W||c.height!==H){c.width=W;c.height=H;}const g=c.getContext('2d');g.setTransform(d,0,0,d,0,0);return [g,r.width,r.height];}
+function drawHeat(M){
+  const c=document.getElementById('heat'),[g,W,H]=fit(c);
+  g.clearRect(0,0,W,H);
+  const pad=28, barW=18, gap=34, side=Math.min(W-barW-gap-pad,H)-2*pad, cw=side/n, ch=side/m, x0=pad+6, y0=(H-side)/2;
+  const [lo,hi]=range, sp=(hi-lo)||1;
+  for(let i=0;i<m;i++)for(let j=0;j<n;j++){g.fillStyle=cmap((M[i][j]-lo)/sp);g.fillRect(x0+j*cw,y0+i*ch,cw,ch);}
+  g.strokeStyle='#ffffff';g.lineWidth=1;
+  for(let j=0;j<=n;j++){g.beginPath();g.moveTo(x0+j*cw,y0);g.lineTo(x0+j*cw,y0+side);g.stroke();}
+  for(let i=0;i<=m;i++){g.beginPath();g.moveTo(x0,y0+i*ch);g.lineTo(x0+side,y0+i*ch);g.stroke();}
+  g.strokeStyle='#dcdcd6';g.strokeRect(x0,y0,side,side);
+  g.fillStyle='#6b6f78';g.font='12px "Segoe UI",Roboto,Arial';g.textAlign='center';g.textBaseline='bottom';
+  for(let j=0;j<n;j++)if((j+1)%5===0||j===0)g.fillText(j+1,x0+(j+0.5)*cw,y0-6);
+  g.textAlign='right';g.textBaseline='middle';
+  for(let i=0;i<m;i++)if((i+1)%5===0||i===0)g.fillText(i+1,x0-6,y0+(i+0.5)*ch);
+  // colorbar
+  const bx=x0+side+gap, by=y0, bh=side;
+  for(let y=0;y<bh;y++){g.fillStyle=cmap(1-y/bh);g.fillRect(bx,by+y,barW,1.5);}
+  g.strokeStyle='#dcdcd6';g.strokeRect(bx,by,barW,bh);
+  g.fillStyle='#6b6f78';g.textAlign='left';g.textBaseline='middle';
+  const nt=5;for(let t=0;t<=nt;t++){const v=lo+(hi-lo)*t/nt,y=by+bh-(bh*t/nt);
+    g.strokeStyle='#6b6f78';g.beginPath();g.moveTo(bx+barW,y+.5);g.lineTo(bx+barW+4,y+.5);g.stroke();g.fillText(v.toFixed(1),bx+barW+7,y);}
+}
+function drawBars(){
+  const c=document.getElementById('bars'),[g,W,H]=fit(c);
+  g.clearRect(0,0,W,H);
+  const L=44,R=10,T=16,B=30,w=W-L-R,h=H-T-B,smax=Math.max(S.s[0],1e-9);
+  g.strokeStyle='#dcdcd6';g.lineWidth=1;g.beginPath();g.moveTo(L,T+h+.5);g.lineTo(L+w,T+h+.5);g.stroke();
+  g.fillStyle='#6b6f78';g.font='13px "Segoe UI",Roboto,Arial';g.textAlign='right';g.textBaseline='middle';
+  for(const f of [0,0.25,0.5,0.75,1]){const y=T+h-f*h;g.fillText((f*smax).toFixed(1),L-6,y);g.strokeStyle='#eeeeea';g.beginPath();g.moveTo(L,y+.5);g.lineTo(L+w,y+.5);g.stroke();}
+  const bw=w/n;
+  S.s.forEach((v,j)=>{const x=L+j*bw+bw*0.15,bh=v/smax*h;
+    g.fillStyle=j<k?'#3b7dd8':'#c9cbc8';g.fillRect(x,T+h-bh,bw*0.7,bh);});
+  g.fillStyle='#1d1f24';g.textAlign='center';g.textBaseline='top';
+  for(let j=0;j<n;j++)if(j===0||(j+1)%5===0)g.fillText(j+1,L+j*bw+bw/2,T+h+7);
+  const xc=L+k*bw;
+  g.strokeStyle='#e8801a';g.lineWidth=2;g.setLineDash([5,4]);g.beginPath();g.moveTo(xc,T-4);g.lineTo(xc,T+h+2);g.stroke();g.setLineDash([]);
+}
+
+function update(){
+  if(!S){S=svd(A);computeRange();}
+  const r=rank(S.s);
+  kOut.value=k;
+  const Ak=truncate(S,k);
+  drawHeat(Ak);
+  drawBars();
+  const e2=k<n?S.s[k]:0, eF=fro(sub(A,Ak));
+  document.getElementById('ro').innerHTML=
+    `<span>rank(A)</span><span>${r}</span>`+
+    `<span>‖A − A<sub>k</sub>‖₂</span><span>${e2.toFixed(3)} = σ<sub>${k+1}</sub></span>`+
+    `<span>‖A − A<sub>k</sub>‖<sub>F</sub></span><span>${eF.toFixed(3)}</span>`+
+    `<span>κ(A) = σ<sub>1</sub>/σ<sub>${n}</sub></span><span>${(S.s[0]/S.s[n-1]).toFixed(1)}</span>`+
+    `<span>κ(A<sub>k</sub>) = σ<sub>1</sub>/σ<sub>k</sub></span><span>${k>0?(S.s[0]/S.s[k-1]).toFixed(1):'—'}</span>`;
+}
+update();
+window.addEventListener('resize',update);
+</script>
+</body>
+</html>
