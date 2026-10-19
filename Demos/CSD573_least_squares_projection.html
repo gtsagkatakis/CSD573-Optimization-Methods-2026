@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Least squares as projection</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --range:#3b7dd8;--null:#d23c3c;--pt:#e8801a;--v1:#1f5fbf;--v2:#2a9d5c;--v3:#8a4fc9}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:18px 22px 26px}
+  h1{font-size:22px;font-weight:600;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:6px;min-height:520px;height:calc(100vh - 110px);max-height:760px}
+  canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+  .legend{position:absolute;left:12px;bottom:10px;font-size:14px;color:var(--muted);pointer-events:none}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;margin-bottom:12px}
+  h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
+  select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:#fff}
+  .mat{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px}
+  .vec{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px}
+  input[type=number]{font:inherit;width:100%;padding:5px 6px;border:1px solid var(--rule);border-bottom-width:3px;border-radius:4px;text-align:right;font-variant-numeric:tabular-nums}
+  .mat input:nth-child(odd){border-bottom-color:var(--v1)} .mat input:nth-child(even){border-bottom-color:var(--v2)}
+  .vec input{border-bottom-color:var(--pt)}
+  .modes{display:flex;gap:6px;flex-wrap:wrap}
+  button{font:inherit;font-size:14px;padding:6px 10px;border:1px solid var(--ink);border-radius:5px;background:#fff;color:var(--ink);cursor:pointer}
+  button.on{background:var(--ink);color:#fff}
+  .read{font-variant-numeric:tabular-nums;font-size:15px}
+  .read div{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-bottom:1px dashed #eceee8}
+  .read div:last-child{border:0}
+  .read i{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:17px}
+  .read b{font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <h1>Least squares as projection</h1>
+  <div class="grid">
+    <div class="stage"><canvas id="cv"></canvas><div class="legend" id="legend"></div></div>
+    <div>
+      <div class="card">
+        <h2>Preset</h2>
+        <select id="preset">
+          <optgroup label="Rank 1 (parallel columns)">
+            <option value="r1">Columns a₂ = −2 a₁</option>
+          </optgroup>
+          <optgroup label="Rank 2">
+            <option value="ok" selected>Well-separated columns</option>
+            <option value="near">Nearly parallel columns</option>
+            <option value="inrange">b already in range(A)</option>
+            <option value="perp">b orthogonal to range(A)</option>
+          </optgroup>
+        </select>
+      </div>
+      <div class="card">
+        <h2>Matrix A (3×2)</h2>
+        <div class="mat" id="A"></div>
+      </div>
+      <div class="card">
+        <h2>Vector b</h2>
+        <div class="vec" id="b"></div>
+      </div>
+      <div class="card">
+        <h2>View</h2>
+        <div class="modes" id="modes">
+          <button data-m="b" >Show b</button>
+          <button data-m="p" class="on">Project on range(A)</button>
+          <button data-m="d">Decompose b = Ax* + r</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Readout</h2>
+        <div class="read" id="read"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const C={ink:'#1d1f24',muted:'#6b6f78',range:'#3b7dd8',rangeFill:'rgba(59,125,216,.14)',nul:'#d23c3c',pt:'#e8801a',v1:'#1f5fbf',v2:'#2a9d5c',v3:'#8a4fc9'};
+  const PRESETS={
+    r1:{A:[[1,-2],[0.5,-1],[0.2,-0.4]],b:[1,1.5,1]},
+    ok:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[1.2,0.6,2.2]},
+    near:{A:[[1.5,1.4],[0.5,0.6],[0.2,0.3]],b:[1,1.2,2]},
+    inrange:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[1.9,1.7,0.9]},
+    perp:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[-0.4,-1.05,2.8]}
+  };
+  let A=[[1.6,0.3],[0.2,1.5],[0.3,0.6]], b=[1.2,0.6,2.2], mode='p', yaw=-0.9, pitch=0.5, drag=null;
+  const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2);
+  const dot=(a,c)=>a.reduce((s,q,i)=>s+q*c[i],0), add=(a,c,s=1)=>a.map((q,i)=>q+s*c[i]), mul=(a,s)=>a.map(q=>q*s), len=a=>Math.sqrt(dot(a,a)), unit=a=>mul(a,1/(len(a)||1));
+  const cross=(a,c)=>[a[1]*c[2]-a[2]*c[1],a[2]*c[0]-a[0]*c[2],a[0]*c[1]-a[1]*c[0]];
+  const col=(M,j)=>M.map(r=>r[j]);
+
+  // least squares for 3x2 via pseudo-inverse of the 2x2 Gram matrix (handles rank 1)
+  function solve(){
+    const a1=col(A,0),a2=col(A,1), g11=dot(a1,a1),g12=dot(a1,a2),g22=dot(a2,a2), r1=dot(a1,b),r2=dot(a2,b);
+    const tr=g11+g22, det=g11*g22-g12*g12, disc=Math.sqrt(Math.max(0,tr*tr/4-det));
+    const l1=tr/2+disc,l2=tr/2-disc, tol=1e-7*Math.max(l1,1e-300), rank=(l1>tol?1:0)+(l2>tol?1:0);
+    let x;
+    if(rank===2){ x=[(r1*g22-r2*g12)/det,(g11*r2-g12*r1)/det]; }
+    else if(rank===1){ // eigenvector of G for l1, project
+      let v=Math.abs(g12)>1e-12?[g12,l1-g11]:(g11>=g22?[1,0]:[0,1]); v=unit(v); const s=dot(v,[r1,r2])/l1; x=mul(v,s); }
+    else x=[0,0];
+    const p=add(mul(a1,x[0]),mul(a2,x[1])), r=add(b,p,-1);
+    return {a1,a2,x,p,r,rank,Atr:[dot(a1,r),dot(a2,r)]};
+  }
+
+  // ---- drawing helpers (screen space)
+  function line(g,a,c,colr,wd,dash){ g.strokeStyle=colr; g.lineWidth=wd; g.setLineDash(dash||[]); g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(c[0],c[1]); g.stroke(); g.setLineDash([]); }
+  function arrow(g,a,c,colr,wd){ const ang=Math.atan2(c[1]-a[1],c[0]-a[0]),L=Math.hypot(c[0]-a[0],c[1]-a[1]); if(L<2) return; const hl=Math.min(13,L*.6);
+    g.strokeStyle=colr; g.fillStyle=colr; g.lineWidth=wd; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(c[0]-hl*.8*Math.cos(ang),c[1]-hl*.8*Math.sin(ang)); g.stroke();
+    g.beginPath(); g.moveTo(c[0],c[1]); g.lineTo(c[0]-hl*Math.cos(ang-.4),c[1]-hl*Math.sin(ang-.4)); g.lineTo(c[0]-hl*Math.cos(ang+.4),c[1]-hl*Math.sin(ang+.4)); g.closePath(); g.fill(); }
+  function label(g,p,t,colr,dx=9,dy=-7){ g.font='italic 19px "Cambria Math",Cambria,"Times New Roman",serif'; g.textAlign='left'; g.textBaseline='bottom'; const m=g.measureText(t).width;
+    g.fillStyle='rgba(255,255,255,.85)'; g.fillRect(p[0]+dx-3,p[1]+dy-20,m+6,22); g.fillStyle=colr; g.fillText(t,p[0]+dx,p[1]+dy); }
+  function point(g,p,r,fill,stroke=C.ink){ g.fillStyle=fill; g.strokeStyle=stroke; g.lineWidth=2; g.beginPath(); g.arc(p[0],p[1],r,0,7); g.fill(); g.stroke(); }
+  function poly(g,pts,fill,stroke){ g.beginPath(); pts.forEach((q,i)=>i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1])); g.closePath(); if(fill){g.fillStyle=fill; g.fill();} if(stroke){g.strokeStyle=stroke; g.lineWidth=1.2; g.stroke();} }
+
+  function align(){ // camera ~0.6 rad off the plane normal, b on the upper side
+    const {a1,a2,r,rank}=solve(); let n;
+    if(rank===2){ n=unit(cross(a1,a2)); if(dot(n,r)<0) n=mul(n,-1); }
+    else if(rank===1){ const u=unit(len(a1)>len(a2)?a1:a2); n=unit(cross(u,len(r)>1e-6?r:[0.3,0.2,1])); if(n[2]<0) n=mul(n,-1); }
+    else n=[0,0,1];
+    const t=0.6, h=Math.hypot(n[0],n[1]);
+    // elevation of normal; tilt camera down from it by t
+    const elN=Math.atan2(n[2],h), azN=Math.atan2(n[1],n[0]);
+    pitch=Math.max(0.12,Math.min(1.45,elN-t)); yaw=azN+Math.PI/2; }
+
+  function draw(){
+    const cv=$('cv'), rc=cv.getBoundingClientRect(), d=window.devicePixelRatio||1; if(rc.width<2) return;
+    cv.width=Math.round(rc.width*d); cv.height=Math.round(rc.height*d); const g=cv.getContext('2d'); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height);
+    const w=rc.width,h=rc.height, S=solve(), {a1,a2,x,p,r,rank}=S;
+    const L=Math.max(2.5,...[a1,a2,b,p].map(len))*1.15, s=Math.min(w,h)/(2*L*1.25), cx=w/2, cy=h/2;
+    const cy_=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch);
+    const P=q=>{ const xr=q[0]*cy_-q[1]*sy, yr=q[0]*sy+q[1]*cy_; return [cx+s*xr, cy-s*(yr*sp+q[2]*cp)]; };
+    const cam=[-sy*cp,-cy_*cp,sp];
+    // standard axes as thin dashed guides
+    [[L,0,0],[0,L,0],[0,0,L]].forEach(q=>line(g,P(mul(q,-1)),P(q),'#c9cbc6',1,[4,4]));
+    const O=P([0,0,0]);
+    // range(A)
+    let n=null;
+    if(rank===2){ n=unit(cross(a1,a2)); const u=unit(a1), v=unit(add(a2,u,-dot(a2,u))), K=L*0.95;
+      poly(g,[[-K,-K],[K,-K],[K,K],[-K,K]].map(c=>P(add(mul(u,c[0]),mul(v,c[1])))),C.rangeFill,'rgba(59,125,216,.5)');
+      for(let k=-3;k<=3;k++){ const t=k*K/3; line(g,P(add(mul(u,t),mul(v,-K))),P(add(mul(u,t),mul(v,K))),'rgba(59,125,216,.25)',1); line(g,P(add(mul(u,-K),mul(v,t))),P(add(mul(u,K),mul(v,t))),'rgba(59,125,216,.25)',1); }
+      const q=P(add(mul(u,-K*0.85),mul(v,K*0.85))); g.font='italic 18px "Cambria Math",Cambria,serif'; g.fillStyle=C.range; g.textAlign='center'; g.textBaseline='middle'; g.fillText('range(A)',q[0],q[1]);
+    } else if(rank===1){ const u=unit(len(a1)>len(a2)?a1:a2), K=L*0.95; line(g,P(mul(u,-K)),P(mul(u,K)),C.range,5);
+      for(let k=-3;k<=3;k++){ const t=k*K/3, m=unit(cross(u,cam)), q=mul(u,t); line(g,P(add(q,m,-0.08)),P(add(q,m,0.08)),C.range,2); }
+      const q=P(mul(u,K*0.98)); label(g,q,'range(A)',C.range,-40,26); }
+    const front = n ? dot(r,n)*dot(n,cam)>=0 : true;
+    const drawB=()=>{ point(g,P(b),8,C.pt); label(g,P(b),'b',C.ink); };
+    const drawProj=()=>{
+      if(mode==='d'){ const q1=P(mul(a1,x[0])), q2=P(p); arrow(g,O,q1,C.v1,3); arrow(g,q1,q2,C.v2,3); line(g,O,P(mul(a2,x[1])),C.v2,1.2,[5,4]); line(g,P(mul(a2,x[1])),q2,C.v1,1.2,[5,4]);
+        label(g,P(mul(a1,x[0]/2)),'x₁*a₁',C.v1,8,-6); label(g,P(add(mul(a1,x[0]),mul(a2,x[1]/2))),'x₂*a₂',C.v2,8,-6); }
+      line(g,P(p),P(b),C.nul,2.5,[7,5]);
+      if(len(r)>1e-3 && rank>0){ const e=unit(rank===2?a1:(len(a1)>len(a2)?a1:a2)), m=unit(r), k=0.22; const c1=add(p,e,k),c2=add(c1,m,k),c3=add(p,m,k);
+        line(g,P(c1),P(c2),C.nul,1.5); line(g,P(c2),P(c3),C.nul,1.5); }
+      label(g,P(add(p,r,0.5)),mode==='d'?'r = b − Ax*':'r',C.nul,10,-4);
+      point(g,P(p),7,C.range); label(g,P(p),'Ax*',C.range,9,24);
+    };
+    if(!front && mode!=='b') drawProj();
+    if(!front) drawB();
+    arrow(g,O,P(a1),C.v1,4); label(g,P(a1),'a₁',C.v1); arrow(g,O,P(a2),C.v2,4); label(g,P(a2),'a₂',C.v2);
+    if(front && mode!=='b') drawProj();
+    if(front) drawB();
+    $('legend').textContent = mode==='b' ? 'a₁, a₂ columns of A · b' : 'b · Ax* projection · r residual';
+    $('read').innerHTML=`
+      <div><span>rank(A)</span><b>${rank}</b></div>
+      <div><span><i>x</i>* = (<i>x</i>₁*, <i>x</i>₂*)</span><b>(${f2(x[0])}, ${f2(x[1])})</b></div>
+      <div><span><i>Ax</i>*</span><b>(${p.map(f2).join(', ')})</b></div>
+      <div><span><i>r</i> = <i>b</i> − <i>Ax</i>*</span><b>(${r.map(f2).join(', ')})</b></div>
+      <div><span>‖<i>r</i>‖₂</span><b>${f2(len(r))}</b></div>
+      <div><span><i>a</i>₁ᵀ<i>r</i>, <i>a</i>₂ᵀ<i>r</i></span><b>${f2(S.Atr[0])}, ${f2(S.Atr[1])}</b></div>`;
+  }
+
+  // ---- inputs
+  function buildInputs(){
+    $('A').innerHTML=''; $('b').innerHTML='';
+    for(let i=0;i<3;i++) for(let j=0;j<2;j++){ const e=document.createElement('input'); e.type='number'; e.step='0.1'; e.value=A[i][j]; e.oninput=()=>{A[i][j]=+e.value||0; draw();}; $('A').appendChild(e); }
+    for(let i=0;i<3;i++){ const e=document.createElement('input'); e.type='number'; e.step='0.1'; e.value=b[i]; e.oninput=()=>{b[i]=+e.value||0; draw();}; $('b').appendChild(e); }
+  }
+  function loadPreset(k){ const p=PRESETS[k]; A=p.A.map(r=>r.slice()); b=p.b.slice(); buildInputs(); align(); draw(); }
+  $('preset').onchange=e=>loadPreset(e.target.value);
+  document.querySelectorAll('#modes button').forEach(bt=>bt.onclick=()=>{ mode=bt.dataset.m; document.querySelectorAll('#modes button').forEach(q=>q.classList.toggle('on',q===bt)); draw(); });
+
+  const cv=$('cv');
+  cv.addEventListener('pointerdown',e=>{ cv.setPointerCapture(e.pointerId); drag=[e.clientX,e.clientY]; cv.style.cursor='grabbing'; });
+  cv.addEventListener('pointermove',e=>{ if(!drag) return; yaw-=(e.clientX-drag[0])*0.01; pitch=Math.min(1.5,Math.max(-0.3,pitch+(e.clientY-drag[1])*0.01)); drag=[e.clientX,e.clientY]; draw(); });
+  const end=()=>{drag=null; cv.style.cursor='grab';}; cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+  window.addEventListener('resize',draw);
+  loadPreset('ok');
+})();
+</script>
+</body>
+</html>

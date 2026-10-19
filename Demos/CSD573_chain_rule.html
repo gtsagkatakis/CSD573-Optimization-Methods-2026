@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chain rule on least squares</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --range:#3b7dd8;--null:#d23c3c;--pt:#e8801a;--v1:#1f5fbf;--v2:#2a9d5c;--v3:#8a4fc9}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:18px 22px 26px}
+  h1{font-size:22px;font-weight:600;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:6px;min-height:520px;height:560px}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;margin-bottom:12px}
+  h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
+  select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:#fff}
+  .r2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px;margin-bottom:6px}
+  .r3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px 10px;margin-bottom:6px}
+  .lab{font-size:13px;color:var(--muted);margin:6px 0 4px}
+  input[type=number]{font:inherit;width:100%;padding:5px 6px;border:1px solid var(--rule);border-bottom-width:3px;border-radius:4px;text-align:right;font-variant-numeric:tabular-nums}
+  #A input:nth-child(odd){border-bottom-color:var(--v1)} #A input:nth-child(even){border-bottom-color:var(--v2)}
+  #b input{border-bottom-color:var(--v3)} #x input{border-bottom-color:var(--pt)}
+  .modes{display:flex;gap:6px;flex-wrap:wrap}
+  button{font:inherit;font-size:14px;padding:6px 10px;border:1px solid var(--ink);border-radius:5px;background:#fff;color:var(--ink);cursor:pointer}
+  button.on{background:var(--ink);color:#fff}
+  .read{font-variant-numeric:tabular-nums;font-size:15px}
+  .read .row{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed #eceee8;align-items:center}
+  .read .row:last-child{border:0}
+  .read i{font-family:"Cambria Math",Cambria,"Times New Roman",serif;font-size:17px}
+  .read b{font-weight:600}
+  .m{display:inline-grid;gap:2px 10px;padding:0 6px;border-left:1.5px solid var(--ink);border-right:1.5px solid var(--ink);border-radius:3px}
+  .m span{text-align:right;min-width:46px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Chain rule on least squares: z = ‖Ax − b‖²</h1>
+  <div class="grid">
+    <div class="stage"><canvas id="cv"></canvas></div>
+    <div>
+      <div class="card">
+        <h2>Preset</h2>
+        <select id="preset">
+          <option value="ok" selected>Well-separated columns</option>
+          <option value="near">Nearly parallel columns</option>
+          <option value="inrange">b in range(A), x = exact solution</option>
+          <option value="opt">x = x* (normal-equations solution)</option>
+        </select>
+      </div>
+      <div class="card">
+        <h2>Matrix A (3×2), vector b, point x</h2>
+        <div class="lab">A</div><div class="r2" id="A"></div>
+        <div class="lab">b</div><div class="r3" id="b"></div>
+        <div class="lab">x</div><div class="r2" id="x"></div>
+      </div>
+      <div class="card">
+        <h2>Step through</h2>
+        <div class="modes"><button id="bReset">Reset</button><button id="bStep">Step</button><button id="bRun">Run all</button></div>
+      </div>
+      <div class="card">
+        <h2>Readout</h2>
+        <div class="read" id="read"></div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const C={ink:'#1d1f24',muted:'#6b6f78',range:'#3b7dd8',nul:'#d23c3c',pt:'#e8801a',v1:'#1f5fbf',v2:'#2a9d5c',v3:'#8a4fc9'};
+  const PRESETS={
+    ok:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[1.2,0.6,2.2],x:[0.5,0.2]},
+    near:{A:[[1.5,1.4],[0.5,0.6],[0.2,0.3]],b:[1,1.2,2],x:[0.5,0.2]},
+    inrange:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[1.9,1.7,0.9],x:[1,1]},
+    opt:{A:[[1.6,0.3],[0.2,1.5],[0.3,0.6]],b:[1.2,0.6,2.2],x:[0.7590,0.6857]}
+  };
+  let A=[[1.6,0.3],[0.2,1.5],[0.3,0.6]], b=[1.2,0.6,2.2], x=[0.5,0.2], step=5;
+  const f2=v=>(Math.abs(v)<0.005?0:v).toFixed(2), fp=v=>v<-0.005?'('+f2(v)+')':f2(v);
+
+  function chain(){
+    const y=A.map((r,i)=>r[0]*x[0]+r[1]*x[1]-b[i]);
+    const z=y.reduce((s,v)=>s+v*v,0);
+    const dzdy=y.map(v=>2*v);                                        // 1x3
+    const dydx=A;                                                    // 3x2
+    const prod=[0,1].map(j=>dzdy.reduce((s,v,i)=>s+v*A[i][j],0));   // 1x2
+    const closed=[0,1].map(j=>2*A.reduce((s,r,i)=>s+r[j]*y[i],0));  // 2A^T(Ax-b)
+    const h=1e-5, zf=q=>A.map((r,i)=>r[0]*q[0]+r[1]*q[1]-b[i]).reduce((s,v)=>s+v*v,0);
+    const fd=[(zf([x[0]+h,x[1]])-zf([x[0]-h,x[1]]))/(2*h),(zf([x[0],x[1]+h])-zf([x[0],x[1]-h]))/(2*h)];
+    return {y,z,dzdy,dydx,prod,closed,fd};
+  }
+
+  // ---- drawing helpers
+  function box(g,x0,y0,w,h,title,col,pending){ g.fillStyle='#fff'; g.strokeStyle=pending?'#c9cbc6':col; g.lineWidth=2; g.setLineDash(pending?[5,4]:[]);
+    g.beginPath(); g.roundRect(x0,y0,w,h,8); g.fill(); g.stroke(); g.setLineDash([]);
+    g.fillStyle=pending?'#c9cbc6':col; g.font='600 16px "Segoe UI",Roboto,sans-serif'; g.textAlign='center'; g.textBaseline='top'; g.fillText(title,x0+w/2,y0+8); }
+  function mat(g,cx,cy,rows,colW,rowH,col){ const n=rows[0].length, w=n*colW+14, h=rows.length*rowH, x0=cx-w/2, y0=cy-h/2;
+    g.strokeStyle=col; g.lineWidth=1.5; g.beginPath(); g.moveTo(x0+6,y0); g.lineTo(x0,y0); g.lineTo(x0,y0+h); g.lineTo(x0+6,y0+h); g.stroke();
+    g.beginPath(); g.moveTo(x0+w-6,y0); g.lineTo(x0+w,y0); g.lineTo(x0+w,y0+h); g.lineTo(x0+w-6,y0+h); g.stroke();
+    g.fillStyle=col; g.font='15px "Segoe UI",Roboto,sans-serif'; g.textAlign='center'; g.textBaseline='middle';
+    rows.forEach((r,i)=>r.forEach((v,j)=>g.fillText(f2(v),x0+7+colW*(j+.5),y0+rowH*(i+.5)))); return w; }
+  function arrow(g,a,c,col,wd){ const ang=Math.atan2(c[1]-a[1],c[0]-a[0]); g.strokeStyle=col; g.fillStyle=col; g.lineWidth=wd; g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(c[0]-8*Math.cos(ang),c[1]-8*Math.sin(ang)); g.stroke();
+    g.beginPath(); g.moveTo(c[0],c[1]); g.lineTo(c[0]-11*Math.cos(ang-.4),c[1]-11*Math.sin(ang-.4)); g.lineTo(c[0]-11*Math.cos(ang+.4),c[1]-11*Math.sin(ang+.4)); g.closePath(); g.fill(); }
+  function text(g,p,t,col,size=15,weight='',align='center',base='middle'){ g.fillStyle=col; g.font=weight+' '+size+'px "Segoe UI",Roboto,sans-serif'; g.textAlign=align; g.textBaseline=base; g.fillText(t,p[0],p[1]); }
+
+  function draw(){
+    const cv=$('cv'), rc=cv.getBoundingClientRect(), d=window.devicePixelRatio||1; if(rc.width<2) return;
+    cv.width=Math.round(rc.width*d); cv.height=Math.round(rc.height*d); const g=cv.getContext('2d'); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height);
+    const w=rc.width,h=rc.height, S=chain();
+    const on=k=>k<=step; // stages: 1 y, 2 z, 3 dz/dy, 4 dy/dx, 5 product
+    // ---- forward row: boxes x -> y -> z
+    const bw=Math.min(190,(w-120)/3), bh=150, yTop=40, cx=[w*0.17,w*0.5,w*0.83];
+    box(g,cx[0]-bw/2,yTop,bw,bh,'x  (2)',C.pt,false); mat(g,cx[0],yTop+bh/2+12,x.map(v=>[v]),56,22,C.ink);
+    box(g,cx[1]-bw/2,yTop,bw,bh,'y = Ax − b  (3)',C.range,!on(1)); if(on(1)) mat(g,cx[1],yTop+bh/2+12,S.y.map(v=>[v]),56,22,C.ink);
+    box(g,cx[2]-bw/2,yTop,bw,bh,'z = ‖y‖²  (1)',C.ink,!on(2)); if(on(2)) text(g,[cx[2],yTop+bh/2+12],f2(S.z),C.ink,22,'600');
+    arrow(g,[cx[0]+bw/2+6,yTop+bh/2],[cx[1]-bw/2-6,yTop+bh/2],C.ink,1.6); arrow(g,[cx[1]+bw/2+6,yTop+bh/2],[cx[2]-bw/2-6,yTop+bh/2],C.ink,1.6);
+    // ---- Jacobians under the arrows
+    const yJ=yTop+bh+58;
+    const m1=[(cx[0]+cx[1])/2,yJ], m2=[(cx[1]+cx[2])/2,yJ];
+    text(g,[m1[0],yJ-40],'∂y/∂x = A   (3×2)',on(4)?C.nul:'#c9cbc6',15,'600'); if(on(4)) mat(g,m1[0],yJ+10,S.dydx,56,22,C.nul);
+    text(g,[m2[0],yJ-40],'∂z/∂y = 2yᵀ   (1×3)',on(3)?C.nul:'#c9cbc6',15,'600'); if(on(3)) mat(g,m2[0],yJ+10,[S.dzdy],56,22,C.nul);
+    // ---- product row
+    const yP=yJ+95;
+    text(g,[w/2,yP-24],'∂z/∂x = ∂z/∂y · ∂y/∂x   (1×3 · 3×2 = 1×2)',on(5)?C.nul:'#c9cbc6',15,'600');
+    if(on(5)){
+      let xx=w/2-250; const row=(lbl,M,col)=>{ text(g,[xx,yP+12],lbl,col,15,'','left'); xx+=g.measureText(lbl).width+14; const ww=mat(g,xx+(M[0].length*56+14)/2,yP+12,M,56,22,col); xx+=ww+22; };
+      row('chain rule:',[S.prod],C.nul); row('slide formula 2Aᵀ(Ax − b):',[S.closed],C.ink);
+    }
+    // ---- step line
+    const k=Math.min(step,5); let t='';
+    if(k===1) t='y₁ = '+fp(A[0][0])+'·'+fp(x[0])+' + '+fp(A[0][1])+'·'+fp(x[1])+' − '+fp(b[0])+' = '+f2(S.y[0])+'    (same for y₂, y₃)';
+    if(k===2) t='z = '+fp(S.y[0])+'² + '+fp(S.y[1])+'² + '+fp(S.y[2])+'² = '+f2(S.z);
+    if(k===3) t='∂z/∂yᵢ = 2yᵢ  →  2·'+fp(S.y[0])+', 2·'+fp(S.y[1])+', 2·'+fp(S.y[2])+'   (a row vector)';
+    if(k===4) t='y = Ax − b is linear in x, so ∂y/∂x = A at every x (b drops out)';
+    if(k===5) t='∂z/∂x₁ = '+fp(S.dzdy[0])+'·'+fp(A[0][0])+' + '+fp(S.dzdy[1])+'·'+fp(A[1][0])+' + '+fp(S.dzdy[2])+'·'+fp(A[2][0])+' = '+f2(S.prod[0])+'     ∂z/∂x₂ = … = '+f2(S.prod[1]);
+    if(k>=1) text(g,[w/2,h-22],'step '+k+'/5:   '+t,k>=3?C.nul:C.ink,15);
+    // readout
+    const m=rows=>'<span class="m" style="grid-template-columns:repeat('+rows[0].length+',auto)">'+rows.flat().map(v=>'<span>'+f2(v)+'</span>').join('')+'</span>';
+    $('read').innerHTML=`
+      <div class="row"><span><i>y</i> = <i>Ax</i> − <i>b</i></span><b>(${S.y.map(f2).join(', ')})</b></div>
+      <div class="row"><span><i>z</i> = ‖<i>y</i>‖²</span><b>${f2(S.z)}</b></div>
+      <div class="row"><span>∂<i>z</i>/∂<i>x</i> (chain rule)</span>${m([S.prod])}</div>
+      <div class="row"><span>2<i>A</i>ᵀ(<i>Ax</i> − <i>b</i>)</span>${m([S.closed])}</div>
+      <div class="row"><span>finite difference</span>${m([S.fd])}</div>
+      <div class="row"><span>‖∂<i>z</i>/∂<i>x</i>‖</span><b>${f2(Math.hypot(...S.prod))}</b></div>`;
+  }
+
+  // ---- inputs
+  function build(){
+    const mk=(parent,get,set)=>{ const e=document.createElement('input'); e.type='number'; e.step='0.1'; e.value=get(); e.oninput=()=>{ set(+e.value||0); draw(); }; parent.appendChild(e); };
+    $('A').innerHTML=''; $('b').innerHTML=''; $('x').innerHTML='';
+    for(let i=0;i<3;i++) for(let j=0;j<2;j++) mk($('A'),()=>A[i][j],v=>A[i][j]=v);
+    for(let i=0;i<3;i++) mk($('b'),()=>b[i],v=>b[i]=v);
+    for(let j=0;j<2;j++) mk($('x'),()=>x[j],v=>x[j]=v);
+  }
+  $('preset').onchange=e=>{ const p=PRESETS[e.target.value]; A=p.A.map(r=>r.slice()); b=p.b.slice(); x=p.x.slice(); build(); draw(); };
+  $('bReset').onclick=()=>{ step=0; draw(); }; $('bStep').onclick=()=>{ step=Math.min(5,step+1); draw(); }; $('bRun').onclick=()=>{ step=5; draw(); };
+  window.addEventListener('resize',draw);
+  build(); draw();
+})();
+</script>
+</body>
+</html>
