@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gradient descent, momentum and Adam on a quadratic</title>
+<style>
+  :root{--bg:#fbfbf9;--ink:#1d1f24;--muted:#6b6f78;--line:#dcdcd6;--orange:#e8801a;
+        --gd:#1f5fbf;--mom:#2a9d5c;--nag:#8a4fc9;--adam:#d23c3c;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  header{padding:18px 24px 6px}
+  h1{margin:0;font-size:22px;font-weight:600}
+  main{display:grid;grid-template-columns:1fr 340px;gap:18px;padding:12px 24px 24px}
+  @media (max-width:900px){main{grid-template-columns:1fr}}
+  .stage{background:#fff;border:1px solid var(--line);border-radius:6px;min-height:520px;position:relative}
+  canvas{display:block;width:100%;height:100%;touch-action:none;border-radius:6px}
+  .side{display:flex;flex-direction:column;gap:12px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:6px;padding:12px 14px}
+  .card h2{margin:0 0 8px;font-size:13px;font-weight:600;color:var(--muted);letter-spacing:.02em}
+  .row{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .row label{min-width:62px}
+  .row input[type=range]{flex:1}
+  output{font-variant-numeric:tabular-nums;min-width:52px;text-align:right}
+  .modes{display:flex;flex-wrap:wrap;gap:6px}
+  .modes button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:5px;padding:5px 10px;font:inherit;font-size:14px;cursor:pointer}
+  .modes button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .modes button i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;border:1px solid var(--line);background:#fff;border-radius:5px;padding:5px 6px;font:inherit;font-size:14px;cursor:pointer}
+  .seg button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;font-size:14px}
+  td,th{padding:3px 4px;text-align:right;border-bottom:1px solid #f0f0ec}
+  th{font-weight:500;color:var(--muted)}
+  td:first-child,th:first-child{text-align:left}
+  td i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+</style>
+</head>
+<body>
+<header><h1>Gradient descent, momentum and Adam on a quadratic</h1></header>
+<main>
+  <div class="stage"><canvas id="cv"></canvas></div>
+  <div class="side">
+    <div class="card">
+      <h2>Problem f(x) = ½ xᵀQx, Q = diag(κ, 1)</h2>
+      <div class="row"><label>κ</label><input id="kappa" type="range" min="0" max="6" step="1" value="3"><output id="kappaO">10</output></div>
+    </div>
+    <div class="card">
+      <h2>Methods</h2>
+      <div class="modes" id="modes">
+        <button data-m="gd" class="on"><i style="background:var(--gd)"></i>Gradient descent</button>
+        <button data-m="mom"><i style="background:var(--mom)"></i>Momentum</button>
+        <button data-m="nag"><i style="background:var(--nag)"></i>Nesterov</button>
+        <button data-m="adam"><i style="background:var(--adam)"></i>Adam</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Step size</h2>
+      <div class="row"><label>α</label><input id="alpha" type="range" min="0.005" max="0.40" step="0.005" value="0.10"><output id="alphaO">0.100</output></div>
+      <div class="seg" id="sched"><button data-s="fixed" class="on">fixed α</button><button data-s="dim">α<sub>k</sub> = α / √k</button></div>
+      <div class="row"><label>β</label><input id="beta" type="range" min="0" max="0.99" step="0.01" value="0.9"><output id="betaO">0.90</output></div>
+    </div>
+    <div class="card">
+      <h2>Iterations</h2>
+      <div class="row"><label>steps</label><input id="steps" type="range" min="0" max="300" step="1" value="60"><output id="stepsO">60</output></div>
+      <div class="row"><label>noise σ</label><input id="noise" type="range" min="0" max="10" step="0.5" value="0"><output id="noiseO">0.0</output></div>
+    </div>
+    <div class="card">
+      <h2>Readout</h2>
+      <table id="ro"><thead><tr><th>method</th><th>f(x<sup>k</sup>)</th><th>steps to ‖x‖ &lt; 0.5</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</main>
+<script>
+(function(){
+  const KAPPAS=[1,2,5,10,20,50,100];
+  const COL={gd:'#1f5fbf',mom:'#2a9d5c',nag:'#8a4fc9',adam:'#d23c3c'};
+  const NAME={gd:'Gradient descent',mom:'Momentum',nag:'Nesterov',adam:'Adam'};
+  const ORDER=['gd','mom','nag','adam'];
+  const KMAX=300, R=25;                 // plot range [-R,R]^2
+  const st={kappa:10,on:{gd:true,mom:false,nag:false,adam:false},alpha:0.10,sched:'fixed',beta:0.9,steps:60,noise:0,x0:[4,20]};
+  const $=id=>document.getElementById(id);
+  const cv=$('cv'),ctx=cv.getContext('2d');
+
+  // ---------- deterministic noise (mulberry32) so every method sees the same draws
+  function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+  function gauss(r){let u=0,v=0;while(u===0)u=r();while(v===0)v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+
+  const f=x=>0.5*(st.kappa*x[0]*x[0]+x[1]*x[1]);
+  function run(m){
+    const r=rng(12345), g=()=>[st.kappa*x[0]+st.noise*gauss(r), x[1]+st.noise*gauss(r)];
+    let x=st.x0.slice(), v=[0,0], m1=[0,0], v2=[0,0];
+    const path=[x.slice()];
+    for(let k=1;k<=KMAX;k++){
+      const a=st.sched==='fixed'?st.alpha:st.alpha/Math.sqrt(k);
+      let gr;
+      if(m==='gd'){ gr=g(); x=[x[0]-a*gr[0], x[1]-a*gr[1]]; }
+      else if(m==='mom'){ gr=g(); v=[st.beta*v[0]-a*gr[0], st.beta*v[1]-a*gr[1]]; x=[x[0]+v[0],x[1]+v[1]]; }
+      else if(m==='nag'){ const xs=x; x=[x[0]+st.beta*v[0], x[1]+st.beta*v[1]]; gr=g(); x=xs;
+                          v=[st.beta*v[0]-a*gr[0], st.beta*v[1]-a*gr[1]]; x=[x[0]+v[0],x[1]+v[1]]; }
+      else { gr=g(); const b1=st.beta,b2=0.999,eps=1e-8;
+             m1=[b1*m1[0]+(1-b1)*gr[0], b1*m1[1]+(1-b1)*gr[1]];
+             v2=[b2*v2[0]+(1-b2)*gr[0]*gr[0], b2*v2[1]+(1-b2)*gr[1]*gr[1]];
+             const mh=[m1[0]/(1-Math.pow(b1,k)), m1[1]/(1-Math.pow(b1,k))];
+             const vh=[v2[0]/(1-Math.pow(b2,k)), v2[1]/(1-Math.pow(b2,k))];
+             x=[x[0]-a*mh[0]/(Math.sqrt(vh[0])+eps), x[1]-a*mh[1]/(Math.sqrt(vh[1])+eps)]; }
+      if(!isFinite(x[0])||!isFinite(x[1])||Math.hypot(x[0],x[1])>1e6){break}
+      path.push(x.slice());
+    }
+    return path;
+  }
+
+  // ---------- drawing
+  let W=0,H=0,sc=1,ox=0,oy=0;
+  function resize(){
+    const r=cv.parentElement.getBoundingClientRect(), d=window.devicePixelRatio||1;
+    cv.width=Math.round(r.width*d); cv.height=Math.round(r.height*d); ctx.setTransform(d,0,0,d,0,0);
+    W=r.width;H=r.height; sc=Math.min(W,H)/(2*R+6); ox=W/2; oy=H/2; draw();
+  }
+  const X=x=>ox+x*sc, Y=y=>oy-y*sc;
+  function contours(){
+    // marching squares on f, levels spaced in sqrt(f) so rings are evenly spaced along x2
+    const n=120, h=2*R/n, L=[];
+    for(let i=1;i<=10;i++){const t=i*R/10;L.push(0.5*t*t)}
+    const F=[];for(let i=0;i<=n;i++){F.push([]);for(let j=0;j<=n;j++){F[i].push(f([-R+i*h,-R+j*h]))}}
+    ctx.lineWidth=1;ctx.strokeStyle='#c9ccd4';
+    for(const lv of L){ctx.beginPath();
+      for(let i=0;i<n;i++)for(let j=0;j<n;j++){
+        const a=F[i][j],b=F[i+1][j],c=F[i+1][j+1],d=F[i][j+1];
+        const p=[[i,j,a],[i+1,j,b],[i+1,j+1,c],[i,j+1,d]], pts=[];
+        for(let e=0;e<4;e++){const p1=p[e],p2=p[(e+1)%4];
+          if((p1[2]<lv)!==(p2[2]<lv)){const t=(lv-p1[2])/(p2[2]-p1[2]);
+            pts.push([-R+(p1[0]+t*(p2[0]-p1[0]))*h, -R+(p1[1]+t*(p2[1]-p1[1]))*h])}}
+        if(pts.length>=2){ctx.moveTo(X(pts[0][0]),Y(pts[0][1]));ctx.lineTo(X(pts[1][0]),Y(pts[1][1]));
+          if(pts.length===4){ctx.moveTo(X(pts[2][0]),Y(pts[2][1]));ctx.lineTo(X(pts[3][0]),Y(pts[3][1]))}}
+      }
+      ctx.stroke()}
+  }
+  function axes(){
+    ctx.strokeStyle='#8a8d95';ctx.lineWidth=1;ctx.setLineDash([4,4]);
+    ctx.beginPath();ctx.moveTo(X(-R),Y(0));ctx.lineTo(X(R),Y(0));ctx.moveTo(X(0),Y(-R));ctx.lineTo(X(0),Y(R));ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#6b6f78';ctx.font='12px sans-serif';ctx.textAlign='center';
+    for(const t of [-20,-10,10,20]){ctx.fillText(t,X(t),Y(0)+14);ctx.textAlign='right';ctx.fillText(t,X(0)-5,Y(t)+4);ctx.textAlign='center'}
+    ctx.fillStyle='#1d1f24';ctx.font='14px sans-serif';ctx.fillText('x₁',X(R)-8,Y(0)-8);ctx.textAlign='left';ctx.fillText('x₂',X(0)+8,Y(R)+10);
+    // minimiser
+    ctx.strokeStyle='#1d1f24';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(X(0)-5,Y(0)-5);ctx.lineTo(X(0)+5,Y(0)+5);ctx.moveTo(X(0)-5,Y(0)+5);ctx.lineTo(X(0)+5,Y(0)-5);ctx.stroke();
+  }
+  let paths={};
+  function draw(){
+    ctx.clearRect(0,0,W,H); contours(); axes();
+    for(const m of ORDER){ if(!st.on[m])continue; const p=paths[m]; const n=Math.min(st.steps,p.length-1);
+      ctx.strokeStyle=COL[m];ctx.lineWidth=1.6;ctx.beginPath();
+      for(let k=0;k<=n;k++){const q=p[k];k?ctx.lineTo(X(q[0]),Y(q[1])):ctx.moveTo(X(q[0]),Y(q[1]))} ctx.stroke();
+      ctx.fillStyle=COL[m];
+      for(let k=1;k<=n;k++){const q=p[k];ctx.beginPath();ctx.arc(X(q[0]),Y(q[1]),2.2,0,7);ctx.fill()}
+      const q=p[n];ctx.beginPath();ctx.arc(X(q[0]),Y(q[1]),4.5,0,7);ctx.fill();
+    }
+    // start point (draggable)
+    ctx.fillStyle='#e8801a';ctx.beginPath();ctx.arc(X(st.x0[0]),Y(st.x0[1]),6,0,7);ctx.fill();
+    ctx.fillStyle='#1d1f24';ctx.font='13px sans-serif';ctx.textAlign='left';ctx.fillText('x⁰',X(st.x0[0])+9,Y(st.x0[1])-6);
+    readout();
+  }
+  function readout(){
+    const tb=$('ro').querySelector('tbody');tb.innerHTML='';
+    for(const m of ORDER){ if(!st.on[m])continue; const p=paths[m]; const n=Math.min(st.steps,p.length-1);
+      let hit='—';for(let k=0;k<p.length;k++){if(Math.hypot(p[k][0],p[k][1])<0.5){hit=k;break}}
+      if(p.length<=KMAX&&hit==='—')hit='diverges';
+      const fv=f(p[n]); const fs=fv>=1e6?fv.toExponential(1):fv>=100?fv.toFixed(0):fv.toFixed(fv>=1?2:4);
+      tb.insertAdjacentHTML('beforeend',`<tr><td><i style="background:${COL[m]}"></i>${NAME[m]}</td><td>${fs}</td><td>${hit}</td></tr>`)}
+  }
+  function recompute(){for(const m of ORDER)paths[m]=run(m);draw()}
+
+  // ---------- controls
+  $('kappa').addEventListener('input',e=>{st.kappa=KAPPAS[+e.target.value];$('kappaO').value=st.kappa;recompute()});
+  $('alpha').addEventListener('input',e=>{st.alpha=+e.target.value;$('alphaO').value=st.alpha.toFixed(3);recompute()});
+  $('beta').addEventListener('input',e=>{st.beta=+e.target.value;$('betaO').value=st.beta.toFixed(2);recompute()});
+  $('steps').addEventListener('input',e=>{st.steps=+e.target.value;$('stepsO').value=st.steps;draw()});
+  $('noise').addEventListener('input',e=>{st.noise=+e.target.value;$('noiseO').value=st.noise.toFixed(1);recompute()});
+  $('modes').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;st.on[b.dataset.m]=!st.on[b.dataset.m];b.classList.toggle('on',st.on[b.dataset.m]);draw()});
+  $('sched').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;st.sched=b.dataset.s;
+    for(const q of $('sched').children)q.classList.toggle('on',q===b);recompute()});
+  // drag the start point
+  let drag=false;
+  const toXY=ev=>{const r=cv.getBoundingClientRect();return [(ev.clientX-r.left-ox)/sc,-(ev.clientY-r.top-oy)/sc]};
+  cv.addEventListener('pointerdown',ev=>{const p=toXY(ev);if(Math.hypot(p[0]-st.x0[0],p[1]-st.x0[1])*sc<14){drag=true;cv.setPointerCapture(ev.pointerId)}});
+  cv.addEventListener('pointermove',ev=>{if(!drag)return;const p=toXY(ev);
+    st.x0=[Math.max(-R,Math.min(R,p[0])),Math.max(-R,Math.min(R,p[1]))];recompute()});
+  cv.addEventListener('pointerup',()=>{drag=false});cv.addEventListener('pointercancel',()=>{drag=false});
+
+  window.addEventListener('resize',resize);
+  for(const m of ORDER)paths[m]=run(m);
+  resize();
+})();
+</script>
+</body>
+</html>
