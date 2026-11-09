@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision boundary of a small MLP</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;--blue:#3b7dd8;--red:#d23c3c;--orange:#e8801a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.45 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1240px;margin:0 auto;padding:18px 22px 26px}
+  h1{font-size:22px;font-weight:600;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 480px;gap:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--rule);border-radius:6px;min-height:520px;height:600px}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .legend{position:absolute;left:12px;top:8px;font-size:14px;color:var(--muted);pointer-events:none}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;margin-bottom:12px}
+  h2{font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px}
+  select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:#fff}
+  .row{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin:8px 0 2px}
+  .row label{font-size:14px;white-space:nowrap}
+  .row output{font-variant-numeric:tabular-nums;font-size:14px;min-width:3em;text-align:right}
+  .r2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .lab{font-size:13px;color:var(--muted);margin:6px 0 4px}
+  .modes{display:flex;gap:6px;flex-wrap:wrap}
+  button{font:inherit;font-size:14px;padding:6px 10px;border:1px solid var(--ink);border-radius:5px;background:#fff;color:var(--ink);cursor:pointer}
+  button.on{background:var(--ink);color:#fff}
+  table{border-collapse:collapse;width:100%;font-size:15px}
+  td{padding:4px 0;border-bottom:1px dashed #eceee8}
+  td:last-child{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  tr:last-child td{border-bottom:none}
+  .chart{position:static;display:block;width:100%;height:130px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Decision boundary of a small MLP</h1>
+  <div class="grid">
+    <div class="stage"><canvas id="cv"></canvas><div class="legend" id="legend"></div></div>
+    <div>
+      <div class="card">
+        <h2>Data</h2>
+        <select id="data">
+          <option value="blobs">Two blobs</option>
+          <option value="xor" selected>XOR (four blobs)</option>
+          <option value="circle">Circle in a ring</option>
+          <option value="moons">Two moons</option>
+        </select>
+        <div class="row"><label for="n">samples per class</label><input id="n" type="range" min="5" max="200" step="5" value="50"><output id="nO">50</output></div>
+      </div>
+      <div class="card">
+        <h2>Model</h2>
+        <div class="r2">
+          <div><div class="lab">hidden units H</div>
+            <select id="H"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>8</option><option>16</option></select></div>
+          <div><div class="lab">activation</div>
+            <select id="act"><option value="linear">linear</option><option value="sigmoid">sigmoid</option><option value="relu" selected>ReLU</option></select></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Training</h2>
+        <div class="row"><label for="alpha">&alpha;</label><input id="alpha" type="range" min="0.05" max="3" step="0.05" value="1"><output id="alphaO">1.00</output></div>
+        <div class="modes" style="margin-top:8px"><button id="bReset">Reset weights</button><button id="bStep">Train 100 epochs</button><button id="bRun">Train 1000 epochs</button></div>
+      </div>
+      <div class="r2">
+        <div class="card">
+          <h2>Loss per epoch</h2>
+          <canvas id="cL" class="chart"></canvas>
+        </div>
+        <div class="card">
+          <h2>Accuracy per epoch</h2>
+          <canvas id="cA" class="chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+(() => {
+  const $=id=>document.getElementById(id);
+  const C={ink:'#1d1f24',muted:'#6b6f78',blue:'#3b7dd8',red:'#d23c3c'};
+  const R=2.4; // plane is [-R,R]^2
+  // ---------- seeded RNG ----------
+  function rng(seed){ let s=seed>>>0; return ()=>{ s+=0x6D2B79F5; let t=Math.imul(s^(s>>>15),1|s); t^=t+Math.imul(t^(t>>>7),61|t); return ((t^(t>>>14))>>>0)/4294967296; }; }
+  function gauss(r){ let u=0,v=0; while(u===0)u=r(); while(v===0)v=r(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); }
+  // ---------- data ----------
+  function sample(kind,n,seed){
+    const r=rng(seed), X=[], Y=[];
+    for(let c=0;c<2;c++) for(let i=0;i<n;i++){
+      let x,y;
+      if(kind==='blobs'){ const cx=c?1.1:-1.1, cy=c?0.8:-0.8; x=cx+0.5*gauss(r); y=cy+0.5*gauss(r); }
+      else if(kind==='xor'){ const q=i%2; const sx=c?(q?1:-1):(q?1:-1), sy=c?(q?1:-1):(q?-1:1); x=sx*1.2+0.45*gauss(r); y=sy*1.2+0.45*gauss(r); }
+      else if(kind==='circle'){ const th=2*Math.PI*r(); const rad=c?(1.7+0.25*gauss(r)):(0.55*Math.sqrt(r())); x=rad*Math.cos(th); y=rad*Math.sin(th); }
+      else { const th=Math.PI*r(); x=c?(1-Math.cos(th)):Math.cos(th); y=c?(0.5-Math.sin(th)):Math.sin(th); x=(x-0.5)*1.6+0.25*gauss(r); y=(y-0.25)*1.6+0.25*gauss(r); }
+      X.push([x,y]); Y.push(c);
+    }
+    return {X,Y};
+  }
+  // ---------- model ----------
+  const state={data:'xor',n:50,H:3,act:'relu',alpha:1,view:'b',epochs:0};
+  let train=null,test=null,P=null,hist=[];
+  function record(){ const tr=lossAcc(train), te=lossAcc(test); hist.push([state.epochs,tr.L,tr.acc,te.acc]); }
+  const ACT={relu:{s:v=>v>0?v:0,d:v=>v>0?1:0},sigmoid:{s:v=>1/(1+Math.exp(-v)),d:v=>{const q=1/(1+Math.exp(-v));return q*(1-q);}},linear:{s:v=>v,d:v=>1}};
+  const sig=z=>1/(1+Math.exp(-z));
+  function initParams(){
+    const r=rng(1234+state.H*7+{relu:1,sigmoid:2,linear:3}[state.act]); const H=state.H;
+    P={W1:[],b1:[],w2:[],b2:0};
+    for(let i=0;i<H;i++){ P.W1.push([gauss(r)*0.8,gauss(r)*0.8]); P.b1.push(gauss(r)*0.3); P.w2.push(gauss(r)*0.8); }
+    if(H===0){ P.w0=[gauss(r)*0.3,gauss(r)*0.3]; }
+    state.epochs=0; hist=[]; record();
+  }
+  function out(x){
+    const H=state.H;
+    if(H===0) return sig(P.w0[0]*x[0]+P.w0[1]*x[1]+P.b2);
+    let z=P.b2; for(let i=0;i<H;i++){ const y=P.W1[i][0]*x[0]+P.W1[i][1]*x[1]+P.b1[i]; z+=P.w2[i]*ACT[state.act].s(y); }
+    return sig(z);
+  }
+  function epoch(){ // one full-batch GD step on mean cross-entropy
+    const H=state.H, X=train.X, Y=train.Y, m=X.length, a=state.alpha;
+    if(H===0){ let g0=0,g1=0,gb=0; for(let k=0;k<m;k++){ const d=(out(X[k])-Y[k])/m; g0+=d*X[k][0]; g1+=d*X[k][1]; gb+=d; }
+      P.w0[0]-=a*g0; P.w0[1]-=a*g1; P.b2-=a*gb; return; }
+    const gW1=P.W1.map(()=>[0,0]), gb1=new Array(H).fill(0), gw2=new Array(H).fill(0); let gb2=0;
+    for(let k=0;k<m;k++){ const x=X[k]; const ys=[],as=[]; let z=P.b2;
+      for(let i=0;i<H;i++){ const y=P.W1[i][0]*x[0]+P.W1[i][1]*x[1]+P.b1[i]; ys.push(y); const av=ACT[state.act].s(y); as.push(av); z+=P.w2[i]*av; }
+      const d=(sig(z)-Y[k])/m; gb2+=d;                        // dL/dz
+      for(let i=0;i<H;i++){ gw2[i]+=d*as[i]; const dy=d*P.w2[i]*ACT[state.act].d(ys[i]); gb1[i]+=dy; gW1[i][0]+=dy*x[0]; gW1[i][1]+=dy*x[1]; } }
+    for(let i=0;i<H;i++){ P.W1[i][0]-=a*gW1[i][0]; P.W1[i][1]-=a*gW1[i][1]; P.b1[i]-=a*gb1[i]; P.w2[i]-=a*gw2[i]; } P.b2-=a*gb2;
+  }
+  function lossAcc(D){ let L=0,c=0; for(let k=0;k<D.X.length;k++){ const h=out(D.X[k]); L-=D.Y[k]*Math.log(h+1e-12)+(1-D.Y[k])*Math.log(1-h+1e-12); if((h>=0.5)===(D.Y[k]===1))c++; } return {L:L/D.X.length,acc:c/D.X.length}; }
+  function trainN(n){ for(let e=0;e<n;e++){ epoch(); state.epochs++; record(); } }
+  function trainConv(){ let prev=lossAcc(train).L; for(let b=0;b<60;b++){ trainN(100); const L=lossAcc(train).L; if(!isFinite(L)||Math.abs(prev-L)<1e-5)break; prev=L; } }
+  function regen(){ train=sample(state.data,state.n,99+state.n); test=sample(state.data,100,2026); initParams(); }
+
+  // ---------- drawing ----------
+  const cv=$('cv'); let plot={x:0,y:0,w:0,h:0};
+  const px=x=>plot.x+(x+R)/(2*R)*plot.w, py=y=>plot.y+plot.h-(y+R)/(2*R)*plot.h;
+  const G=130; const off=document.createElement('canvas'); off.width=G; off.height=G;
+  function draw(){
+    const rc=cv.getBoundingClientRect(), d=window.devicePixelRatio||1; if(rc.width<2)return;
+    cv.width=Math.round(rc.width*d); cv.height=Math.round(rc.height*d); const g=cv.getContext('2d'); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height);
+    const W=rc.width,Hh=rc.height; const s=Math.min(W-40,Hh-76); plot={x:(W-s)/2,y:34,w:s,h:s};
+    // field
+    const F=new Float32Array(G*G); const img=off.getContext('2d').createImageData(G,G);
+    for(let j=0;j<G;j++)for(let i=0;i<G;i++){ const x=-R+2*R*(i+.5)/G, y=R-2*R*(j+.5)/G; const h=out([x,y]); F[j*G+i]=h;
+      const t=h-0.5; const k=4*(j*G+i); // blue (h=0) -> white -> red (h=1)
+      if(t<0){ const u=-t*2; img.data[k]=255-(255-59)*u*0.45; img.data[k+1]=255-(255-125)*u*0.45; img.data[k+2]=255-(255-216)*u*0.45; }
+      else { const u=t*2; img.data[k]=255-(255-210)*u*0.45; img.data[k+1]=255-(255-60)*u*0.45; img.data[k+2]=255-(255-60)*u*0.45; }
+      img.data[k+3]=255; }
+    off.getContext('2d').putImageData(img,0,0); g.imageSmoothingEnabled=true; g.drawImage(off,plot.x,plot.y,plot.w,plot.h);
+    g.save(); g.beginPath(); g.rect(plot.x,plot.y,plot.w,plot.h); g.clip();
+    // hidden-unit zero lines
+    if(false){ g.strokeStyle=C.ink; g.lineWidth=1; g.setLineDash([5,4]);
+      for(let i=0;i<state.H;i++){ const [a,b]=P.W1[i], c=P.b1[i]; // a x + b y + c = 0
+        const pts=[]; const yAt=x=>(-c-a*x)/b, xAt=y=>(-c-b*y)/a;
+        if(Math.abs(b)>1e-9){ pts.push([-R,yAt(-R)],[R,yAt(R)]); } else { pts.push([xAt(-R),-R],[xAt(R),R]); }
+        g.beginPath(); g.moveTo(px(pts[0][0]),py(pts[0][1])); g.lineTo(px(pts[1][0]),py(pts[1][1])); g.stroke(); }
+      g.setLineDash([]); }
+    // decision boundary: marching squares at 0.5
+    g.strokeStyle=C.ink; g.lineWidth=2.2; g.beginPath();
+    const cx=i=>plot.x+(i+.5)/G*plot.w, cy=j=>plot.y+(j+.5)/G*plot.h, lev=0.5;
+    for(let j=0;j<G-1;j++)for(let i=0;i<G-1;i++){ const a=F[j*G+i],b=F[j*G+i+1],c=F[(j+1)*G+i+1],dd=F[(j+1)*G+i];
+      const idx=(a>lev?8:0)|(b>lev?4:0)|(c>lev?2:0)|(dd>lev?1:0); if(idx===0||idx===15)continue; const f=(p,q)=>(lev-p)/(q-p);
+      const top=[cx(i)+f(a,b)*(plot.w/G),cy(j)], right=[cx(i+1),cy(j)+f(b,c)*(plot.h/G)], bot=[cx(i)+f(dd,c)*(plot.w/G),cy(j+1)], left=[cx(i),cy(j)+f(a,dd)*(plot.h/G)];
+      const seg=(p,q)=>{g.moveTo(p[0],p[1]);g.lineTo(q[0],q[1]);};
+      switch(idx){case 1:case 14:seg(left,bot);break;case 2:case 13:seg(bot,right);break;case 3:case 12:seg(left,right);break;case 4:case 11:seg(top,right);break;
+        case 5:seg(left,top);seg(bot,right);break;case 6:case 9:seg(top,bot);break;case 7:case 8:seg(left,top);break;case 10:seg(top,right);seg(left,bot);break;} }
+    g.stroke();
+    // training points
+    for(let k=0;k<train.X.length;k++){ const [x,y]=train.X[k]; const X=px(x),Y=py(y); g.strokeStyle=train.Y[k]?C.red:C.blue; g.lineWidth=2;
+      g.beginPath(); g.moveTo(X-4,Y-4); g.lineTo(X+4,Y+4); g.moveTo(X-4,Y+4); g.lineTo(X+4,Y-4); g.stroke(); }
+    g.restore();
+    g.strokeStyle='#999'; g.lineWidth=1; g.strokeRect(plot.x+.5,plot.y+.5,plot.w,plot.h);
+    g.fillStyle=C.ink; g.font='13px "Segoe UI",Roboto,sans-serif'; g.textAlign='center'; g.textBaseline='top';
+    for(let v=-2;v<=2;v++){ g.fillText(v,px(v),plot.y+plot.h+6); } g.fillText('x₁',plot.x+plot.w/2,plot.y+plot.h+22);
+    g.textAlign='right'; g.textBaseline='middle'; for(let v=-2;v<=2;v++) g.fillText(v,plot.x-6,py(v));
+    g.save(); g.translate(plot.x-26,plot.y+plot.h/2); g.rotate(-Math.PI/2); g.textAlign='center'; g.fillText('x₂',0,0); g.restore();
+    drawCharts();
+  }
+
+  function chart(id,series,ymin,ymax,fmt,pct){
+    const c=$(id), rc=c.getBoundingClientRect(), d=window.devicePixelRatio||1; if(rc.width<2)return;
+    c.width=Math.round(rc.width*d); c.height=Math.round(rc.height*d); const g=c.getContext('2d'); g.setTransform(d,0,0,d,0,0); g.clearRect(0,0,rc.width,rc.height);
+    const ml=40,mr=14,mt=10,mb=22, w=rc.width-ml-mr, h=rc.height-mt-mb; const n=hist.length, xmax=Math.max(1,hist[n-1][0]);
+    const X=e=>ml+e/xmax*w, Y=v=>mt+h-(v-ymin)/(ymax-ymin)*h;
+    g.strokeStyle='#999'; g.lineWidth=1; g.beginPath(); g.moveTo(ml,mt); g.lineTo(ml,mt+h); g.lineTo(ml+w,mt+h); g.stroke();
+    g.fillStyle='#1d1f24'; g.font='12px "Segoe UI",Roboto,sans-serif'; g.textAlign='right'; g.textBaseline='middle';
+    for(let k=0;k<=2;k++){ const v=ymin+(ymax-ymin)*k/2; g.fillText(fmt(v),ml-5,Y(v)); g.fillStyle='#eceee8'; g.fillRect(ml,Y(v)-.5,w,1); g.fillStyle='#1d1f24'; }
+    g.textAlign='left'; g.textBaseline='top'; g.fillText('0',ml,mt+h+5); g.textAlign='right'; g.fillText(xmax,ml+w,mt+h+5); g.textAlign='center'; g.fillText('epoch',ml+w/2,mt+h+5);
+    series.forEach(([idx,col,dash])=>{ g.strokeStyle=col; g.lineWidth=1.8; g.setLineDash(dash?[4,3]:[]); g.beginPath();
+      hist.forEach((r,i)=>{ const v=Math.min(ymax,Math.max(ymin,r[idx])); i?g.lineTo(X(r[0]),Y(v)):g.moveTo(X(r[0]),Y(v)); }); g.stroke(); g.setLineDash([]);
+      const last=hist[n-1][idx], yl=Y(Math.min(ymax,Math.max(ymin,last))); g.fillStyle=col; g.textAlign='right'; if(yl<mt+14){ g.textBaseline='top'; g.fillText(fmt(last),ml+w-2,yl+3); } else { g.textBaseline='bottom'; g.fillText(fmt(last),ml+w-2,yl-3); } });
+  }
+  function drawCharts(){
+    const Lmax=Math.max(0.1,...hist.map(r=>r[1]).filter(isFinite));
+    chart('cL',[[1,'#3b7dd8',false]],0,Math.ceil(Lmax*10)/10,v=>v.toFixed(2));
+    chart('cA',[[2,'#1d1f24',false],[3,'#e8801a',true]],0,1,v=>(100*v).toFixed(0)+'%');
+  }
+  // ---------- controls ----------
+  $('data').onchange=e=>{ state.data=e.target.value; regen(); draw(); };
+  $('n').oninput=e=>{ state.n=+e.target.value; $('nO').textContent=state.n; regen(); draw(); };
+  $('H').onchange=e=>{ state.H=+e.target.value; initParams(); draw(); };
+  $('act').onchange=e=>{ state.act=e.target.value; initParams(); draw(); };
+  $('alpha').oninput=e=>{ state.alpha=+e.target.value; $('alphaO').textContent=state.alpha.toFixed(2); };
+  $('bReset').onclick=()=>{ initParams(); draw(); };
+  $('bStep').onclick=()=>{ trainN(100); draw(); };
+  $('bRun').onclick=()=>{ trainN(1000); draw(); };
+  window.addEventListener('resize',draw);
+  regen(); draw();
+})();
+</script>
+</body>
+</html>
