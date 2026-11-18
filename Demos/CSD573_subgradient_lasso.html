@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subgradient descent on the Lasso</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --c0:#1f5fbf;--c1:#2a9d5c;--c2:#8a4fc9;--x:#e8801a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.4 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1320px;margin:0 auto;padding:16px 22px 22px}
+  h1{font-size:22px;font-weight:600;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .stage{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px;min-height:520px}
+  .cw{position:relative;width:100%}
+  #w1{height:min(34vh,290px);min-height:220px}
+  #w2{height:min(42vh,350px);min-height:250px;margin-top:8px}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px 14px 12px;margin-bottom:12px}
+  .card h2{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--muted)}
+  .btns{display:flex;gap:6px}
+  button{flex:1;font:inherit;font-size:15px;padding:7px 4px;border-radius:5px;border:1px solid var(--rule);
+    border-bottom-width:4px;background:var(--panel);color:var(--ink);cursor:pointer}
+  button[data-r="0"]{border-bottom-color:var(--c0)} button[data-r="1"]{border-bottom-color:var(--c1)} button[data-r="2"]{border-bottom-color:var(--c2)}
+  button.on{background:var(--ink);color:#fff}
+  button:focus-visible,input:focus-visible{outline:3px solid var(--x);outline-offset:2px}
+  .sl{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}
+  .sl input{width:100%;grid-column:1}
+  output{font-variant-numeric:tabular-nums;font-weight:600;min-width:62px;text-align:right}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  td{padding:5px 0;border-top:1px solid #eeeeea;vertical-align:baseline}
+  tr:first-child td{border-top:0}
+  td:last-child{text-align:right;font-weight:600;white-space:nowrap;padding-left:10px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Subgradient descent on the Lasso</h1>
+  <div class="grid">
+    <div class="stage">
+      <div class="cw" id="w1"><canvas id="cv1"></canvas></div>
+      <div class="cw" id="w2"><canvas id="cv2"></canvas></div>
+    </div>
+    <div>
+      <div class="card"><h2>Step size rule</h2>
+        <div class="btns">
+          <button data-r="0" class="on">Fixed t</button>
+          <button data-r="1">t / √k</button>
+          <button data-r="2">Polyak</button>
+        </div>
+      </div>
+      <div class="card"><h2>Iteration k</h2>
+        <div class="sl"><input type="range" id="k" min="0" max="5000" step="1" value="200"><output id="ko"></output></div>
+      </div>
+      <div class="card"><h2>Step size t</h2>
+        <div class="sl"><input type="range" id="t" min="-3.5" max="-1.8" step="0.01" value="-2.3"><output id="to"></output></div>
+      </div>
+      <div class="card"><h2>Regularization λ</h2>
+        <div class="sl"><input type="range" id="lam" min="0.1" max="2" step="0.1" value="1"><output id="lo"></output></div>
+      </div>
+      <div class="card"><h2>Readout</h2>
+        <table>
+          <tr><td>best value so far, minus the optimum</td><td id="r1"></td></tr>
+          <tr><td>current value, minus the optimum</td><td id="r2"></td></tr>
+          <tr><td>coefficients exactly zero, current iterate</td><td id="r3"></td></tr>
+          <tr><td>coefficients exactly zero, Lasso solution</td><td id="r4"></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/*MATH*/
+// minimise ||y - Ax||^2 + lam*||x||_1   (no 1/2 factor, as on the slides), starting from x = 0
+function rng(seed){let a=seed>>>0;const u=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+  return {u,n:()=>Math.sqrt(-2*Math.log(u()+1e-12))*Math.cos(6.283185307179586*u())};}
+// same data as the "Ridge vs Lasso" demo, cosine features: 16 samples, 30 features cos(j*pi*s),
+// true curve built from 3 of them
+const NP=16, NC=30, TC={1:0.7,4:-0.55,9:0.4};
+const feat=s=>{const r=[];for(let j=0;j<NC;j++)r.push(Math.cos(j*Math.PI*s));return r;};
+const truth=s=>{let t=0;for(const j in TC)t+=TC[j]*Math.cos(j*Math.PI*s);return t;};
+function makeProblem(){const R=rng(15),s=[],y=[];
+  for(let i=0;i<NP;i++)s.push((i+0.1+0.8*R.u())/NP);
+  for(const v of s)y.push(truth(v)+0.05*R.n());
+  return {A:s.map(feat),y,m:NP,n:NC,s};}
+const evalc=(c,s)=>{const f=feat(s);let t=0;for(let j=0;j<NC;j++)t+=f[j]*c[j];return t;};
+function resid(P,x){const r=new Array(P.m);for(let i=0;i<P.m;i++){let s=-P.y[i];for(let j=0;j<P.n;j++)s+=P.A[i][j]*x[j];r[i]=s;}return r;}
+function obj(P,x,lam){const r=resid(P,x);let f=0;for(const v of r)f+=v*v;for(const v of x)f+=lam*Math.abs(v);return f;}
+// exact Lasso solution by coordinate descent (soft-threshold at lam/2)
+function lassoCD(P,lam){const x=new Array(P.n).fill(0),r=P.y.map(v=>-v),cn=[];
+  for(let j=0;j<P.n;j++){let s=0;for(let i=0;i<P.m;i++)s+=P.A[i][j]**2;cn.push(s);}
+  for(let it=0;it<200000;it++){let d=0;
+    for(let j=0;j<P.n;j++){let rho=0;for(let i=0;i<P.m;i++)rho+=P.A[i][j]*r[i];rho=cn[j]*x[j]-rho;
+      const nx=Math.sign(rho)*Math.max(Math.abs(rho)-lam/2,0)/cn[j],dx=nx-x[j];
+      if(dx){for(let i=0;i<P.m;i++)r[i]+=P.A[i][j]*dx;x[j]=nx;d=Math.max(d,Math.abs(dx));}}
+    if(d<1e-15)break;}
+  return x;}
+function subgrad(P,x,lam){const r=resid(P,x),g=new Array(P.n);
+  for(let j=0;j<P.n;j++){let s=0;for(let i=0;i<P.m;i++)s+=P.A[i][j]*r[i];g[j]=2*s+lam*Math.sign(x[j]);}return g;}
+// rule 0: fixed t, rule 1: t/sqrt(k), rule 2: Polyak (f - f*)/||g||^2
+function run(P,lam,t,rule,K,fs){let x=new Array(P.n).fill(0);const X=[],F=[],B=[];let best=Infinity;
+  for(let k=0;k<=K;k++){const f=obj(P,x,lam);best=Math.min(best,f);X.push(x);F.push(f);B.push(best);
+    const g=subgrad(P,x,lam);let gg=0;for(const v of g)gg+=v*v;if(gg===0)gg=1;
+    const a=rule===0?t:rule===1?t/Math.sqrt(k+1):(f-fs)/gg;
+    x=x.map((v,j)=>v-a*g[j]);}
+  return {X,F,B};}
+/*END*/
+
+(() => {
+  const $=id=>document.getElementById(id), K=5000, P=makeProblem();
+  const COL=['#1f5fbf','#2a9d5c','#8a4fc9'], INK='#1d1f24', MUTED='#6b6f78', GRID='#ececE6';
+  let rule=0, xs, fs, T;
+  const sup=n=>String(n).replace(/[-0-9]/g,c=>'⁻⁰¹²³⁴⁵⁶⁷⁸⁹'['-0123456789'.indexOf(c)]);
+    const sci=v=>v<=0?'0':v.toExponential(1).replace(/e([+-])(\d+)/,(m,s,d)=>' × 10'+sup((s==='-'?'-':'')+d));
+
+  function ctx(cv){const rc=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+    cv.width=Math.round(rc.width*d);cv.height=Math.round(rc.height*d);
+    const g=cv.getContext('2d');g.setTransform(d,0,0,d,0,0);return {g,w:rc.width,h:rc.height};}
+
+  function solve(){const lam=+$('lam').value,t=Math.pow(10,+$('t').value);
+    xs=lassoCD(P,lam);fs=obj(P,xs,lam);T=[0,1,2].map(r=>run(P,lam,t,r,K,fs));}
+
+  // ---- convergence chart: log-log, fixed axes
+  const Y0=-6,Y1=2,X1=Math.log10(K+1);
+  function chart(){const {g,w,h}=ctx($('cv2')),L=64,R=30,Tp=12,B=40,k=+$('k').value;
+    const px=i=>L+(Math.log10(i+1)/X1)*(w-L-R), py=v=>Tp+(Y1-Math.max(Y0,Math.min(Y1,Math.log10(Math.max(v,1e-300)))))/(Y1-Y0)*(h-Tp-B);
+    g.clearRect(0,0,w,h);g.font='14px "Segoe UI",Roboto,Arial,sans-serif';g.lineWidth=1;
+    g.textAlign='right';g.textBaseline='middle';
+    for(let e=Y0;e<=Y1;e+=2){const y=py(Math.pow(10,e));g.strokeStyle=GRID;g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
+      g.fillStyle=MUTED;g.fillText('10'+sup(e),L-8,y);}
+    g.textAlign='center';g.textBaseline='top';
+    for(const i of [1,10,100,1000,5000]){const x=px(i-1);g.strokeStyle=GRID;g.beginPath();g.moveTo(x,Tp);g.lineTo(x,h-B);g.stroke();
+      g.fillStyle=MUTED;g.fillText(i,x,h-B+6);}
+    g.strokeStyle=INK;g.beginPath();g.moveTo(L,Tp);g.lineTo(L,h-B);g.lineTo(w-R,h-B);g.stroke();
+    g.fillStyle=MUTED;g.fillText('iteration k',(L+w-R)/2,h-18);
+    g.save();g.translate(16,(Tp+h-B)/2);g.rotate(-Math.PI/2);g.fillText('best value so far − optimum',0,-8);g.restore();
+    g.save();g.beginPath();g.rect(L,Tp,w-L-R,h-Tp-B);g.clip();
+    // current (non-monotone) values of the selected rule
+    g.strokeStyle=COL[rule];g.globalAlpha=.28;g.lineWidth=1;g.beginPath();
+    for(let i=0;i<=K;i++){const x=px(i),y=py(T[rule].F[i]-fs);i?g.lineTo(x,y):g.moveTo(x,y);}g.stroke();g.globalAlpha=1;
+    for(const r of [0,1,2].filter(r=>r!==rule).concat(rule)){
+      g.strokeStyle=COL[r];g.lineWidth=r===rule?3:1.6;g.globalAlpha=r===rule?1:.55;g.beginPath();
+      for(let i=0;i<=K;i++){const x=px(i),y=py(T[r].B[i]-fs);i?g.lineTo(x,y):g.moveTo(x,y);}g.stroke();}
+    g.globalAlpha=1;
+    const xk=px(k);g.strokeStyle='#e8801a';g.lineWidth=2;g.setLineDash([6,5]);g.beginPath();g.moveTo(xk,Tp);g.lineTo(xk,h-B);g.stroke();g.setLineDash([]);
+    g.fillStyle=COL[rule];g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.arc(xk,py(T[rule].B[k]-fs),6,0,7);g.fill();g.stroke();
+    g.restore();
+  }
+
+  // ---- the fit: data, true curve, exact Lasso fit, and the fit of the current iterate
+  function fit(){const {g,w,h}=ctx($('cv1')),L=64,R=30,Tp=10,B=30,V=1.9,k=+$('k').value;
+    const px=s=>L+s*(w-L-R), py=v=>Tp+(V-v)/(2*V)*(h-Tp-B);
+    g.clearRect(0,0,w,h);g.font='14px "Segoe UI",Roboto,Arial,sans-serif';g.lineWidth=1;
+    g.textAlign='right';g.textBaseline='middle';
+    for(let v=-1;v<=1;v++){const y=py(v);g.strokeStyle=v?GRID:'#c9c9c2';g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();g.fillStyle=MUTED;g.fillText(v,L-8,y);}
+    g.textAlign='center';g.textBaseline='top';
+    for(const s of [0,.25,.5,.75,1]){const x=px(s);g.strokeStyle=GRID;g.beginPath();g.moveTo(x,Tp);g.lineTo(x,h-B);g.stroke();g.fillStyle=MUTED;g.fillText(s,x,h-B+7);}
+    g.strokeStyle=INK;g.beginPath();g.moveTo(L,Tp);g.lineTo(L,h-B);g.lineTo(w-R,h-B);g.stroke();
+    g.save();g.beginPath();g.rect(L,Tp,w-L-R,h-Tp-B);g.clip();
+    const curve=(f,col,lw,dash)=>{g.strokeStyle=col;g.lineWidth=lw;g.setLineDash(dash);g.beginPath();
+      for(let i=0;i<=500;i++){const s=i/500,x=px(s),y=py(Math.max(-9,Math.min(9,f(s))));i?g.lineTo(x,y):g.moveTo(x,y);}g.stroke();g.setLineDash([]);};
+    curve(truth,'#555',2,[7,6]);
+    curve(s=>evalc(xs,s),INK,1.5,[]);
+    curve(s=>evalc(T[rule].X[k],s),COL[rule],3.5,[]);
+    for(let i=0;i<P.m;i++){g.fillStyle='#e8801a';g.strokeStyle='#fff';g.lineWidth=1.5;g.beginPath();g.arc(px(P.s[i]),py(P.y[i]),5.5,0,7);g.fill();g.stroke();}
+    g.restore();
+    g.textAlign='left';g.textBaseline='bottom';g.fillStyle=MUTED;g.fillText('data    - - true curve    — Lasso solution    ▬ fit at iteration k',L+26,h-B-6);
+    g.fillStyle='#e8801a';g.beginPath();g.arc(L+15,h-B-15,5,0,7);g.fill();
+  }
+
+  function readout(){const k=+$('k').value;
+    $('ko').textContent=k;$('to').textContent=Math.pow(10,+$('t').value).toFixed(3);$('lo').textContent=(+$('lam').value).toFixed(1);
+    $('r1').textContent=sci(T[rule].B[k]-fs);$('r2').textContent=sci(T[rule].F[k]-fs);
+    $('r3').textContent=T[rule].X[k].filter(v=>v===0).length+' of '+P.n;
+    $('r4').textContent=xs.filter(v=>v===0).length+' of '+P.n;}
+  const draw=()=>{fit();chart();readout();};
+
+  document.querySelectorAll('button[data-r]').forEach(b=>b.addEventListener('click',()=>{rule=+b.dataset.r;
+    document.querySelectorAll('button[data-r]').forEach(c=>c.classList.toggle('on',c===b));draw();}));
+  $('k').addEventListener('input',draw);
+  ['t','lam'].forEach(id=>$(id).addEventListener('input',()=>{solve();draw();}));
+  window.addEventListener('resize',draw);
+  solve();draw();
+})();
+</script>
+</body>
+</html>
