@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ridge vs Lasso</title>
+<style>
+  :root{--ink:#1d1f24;--muted:#6b6f78;--paper:#fbfbf9;--panel:#fff;--rule:#dcdcd6;
+        --ridge:#1f5fbf;--lasso:#2a9d5c;--x:#e8801a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.4 "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+  main{max-width:1320px;margin:0 auto;padding:16px 22px 22px}
+  h1{font-size:22px;font-weight:600;margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  .stage{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px;min-height:520px}
+  .cw{position:relative;width:100%}
+  #w1{height:min(42vh,350px);min-height:250px}
+  #w2{height:min(34vh,280px);min-height:200px;margin-top:8px}
+  canvas{position:absolute;inset:0;width:100%;height:100%}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:10px 14px 12px;margin-bottom:12px}
+  .card h2{margin:0 0 8px;font-size:14px;font-weight:600;color:var(--muted)}
+  .btns{display:flex;gap:6px}
+  button{flex:1;font:inherit;font-size:15px;padding:7px 4px;border-radius:5px;border:1px solid var(--rule);
+    border-bottom-width:4px;background:var(--panel);color:var(--ink);cursor:pointer}
+  button[data-m="0"]{border-bottom-color:var(--ridge)} button[data-m="1"]{border-bottom-color:var(--lasso)}
+  button.on{background:var(--ink);color:#fff}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--x);outline-offset:2px}
+  select{font:inherit;width:100%;padding:6px 8px;border:1px solid var(--rule);border-radius:5px;background:#fff;color:var(--ink)}
+  .sl{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center}
+  .sl input{width:100%}
+  output{font-variant-numeric:tabular-nums;font-weight:600;min-width:86px;text-align:right}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th{font-weight:600;text-align:right;padding:0 0 4px 10px;font-size:15px}
+  th.r{color:var(--ridge)} th.l{color:var(--lasso)}
+  td{padding:5px 0;border-top:1px solid #eeeeea}
+  td+td{text-align:right;font-weight:600;white-space:nowrap;padding-left:10px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Ridge vs Lasso</h1>
+  <div class="grid">
+    <div class="stage">
+      <div class="cw" id="w1"><canvas id="cv1"></canvas></div>
+      <div class="cw" id="w2"><canvas id="cv2"></canvas></div>
+    </div>
+    <div>
+      <div class="card"><h2>Show</h2>
+        <div class="btns">
+          <button data-m="0">Ridge</button>
+          <button data-m="1">Lasso</button>
+          <button data-m="2" class="on">Both</button>
+        </div>
+      </div>
+      <div class="card"><h2>Regularization λ</h2>
+        <div class="sl"><input type="range" id="lam" min="-5.05" max="1" step="0.05" value="-5.05"><output id="lo"></output></div>
+      </div>
+      <div class="card"><h2>Features</h2>
+        <select id="feat">
+          <option value="0">polynomial: 1, s, s², …</option>
+          <option value="1">30 cosines, 3 in the true curve</option>
+          <option value="2">20 cosines, all 20 in the true curve</option>
+        </select>
+      </div>
+      <div class="card"><h2>Polynomial degree</h2>
+        <select id="pre">
+          <option value="3">3</option>
+          <option value="9">9</option>
+          <option value="15" selected>15</option>
+        </select>
+      </div>
+      <div class="card"><h2>Outliers</h2>
+        <select id="out">
+          <option value="0">none</option>
+          <option value="1">1 outlier</option>
+          <option value="2">2 outliers</option>
+        </select>
+      </div>
+      <div class="card"><h2>Readout</h2>
+        <table>
+          <tr><th></th><th class="r">Ridge</th><th class="l">Lasso</th></tr>
+          <tr><td>coefficients exactly zero</td><td id="z0"></td><td id="z1"></td></tr>
+          <tr><td>largest coefficient, absolute value</td><td id="m0"></td><td id="m1"></td></tr>
+          <tr><td>error on the data</td><td id="e0"></td><td id="e1"></td></tr>
+          <tr><td>error against the true curve</td><td id="t0"></td><td id="t1"></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+/*MATH*/
+// ridge: min ||y - Ax||^2 + lam*||x||_2^2      lasso: min ||y - Ax||^2 + lam*||x||_1
+// kind 0 (polynomial): 16 noisy samples of sin(2*pi*s), features 1, s, ..., s^deg
+//   (16 points, so that degree 15 interpolates them at lam = 0)
+// kind 1 (sparse cosines): 16 samples, 30 features cos(j*pi*s), j = 0..29; the true curve uses only 3 of them
+// kind 2 (dense cosines): 16 samples, 20 features cos(j*pi*s), j = 0..19; the true curve uses all 20, each with weight +-0.2
+const NP=16, NC=30, TC={1:0.7,4:-0.55,9:0.4}, SEEDC=15;
+function rng(seed){let a=seed>>>0;const u=()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+  return {u,n:()=>Math.sqrt(-2*Math.log(u()+1e-12))*Math.cos(6.283185307179586*u())};}
+const truthP=s=>Math.sin(2*Math.PI*s);
+const featC=s=>{const r=[];for(let j=0;j<NC;j++)r.push(Math.cos(j*Math.PI*s));return r;};
+const truthC=s=>{let t=0;for(const j in TC)t+=TC[j]*Math.cos(j*Math.PI*s);return t;};
+const ND=20, SEEDD=10, TD=(()=>{const C=rng(1000+SEEDD),c=[];for(let j=0;j<ND;j++)c.push((C.u()<.5?-1:1)*0.2);return c;})();
+const featD=s=>{const r=[];for(let j=0;j<ND;j++)r.push(Math.cos(j*Math.PI*s));return r;};
+const truthD=s=>{let t=0;for(let j=0;j<ND;j++)t+=TD[j]*Math.cos(j*Math.PI*s);return t;};
+function makeData(kind,deg,nout){const R=rng([1573,SEEDC,SEEDD][kind]),s=[],y=[],out=[4,11].slice(0,nout||0),truth=[truthP,truthC,truthD][kind],sig=kind?0.05:0.25;
+  const feat=kind===2?featD:kind?featC:(v=>{const r=[1];for(let j=1;j<=deg;j++)r.push(r[j-1]*v);return r;});
+  for(let i=0;i<NP;i++)s.push((i+0.1+0.8*R.u())/NP);
+  for(const v of s)y.push(truth(v)+sig*R.n());
+  // outliers: far side of the true curve
+  out.forEach((i,q)=>{const t=truth(s[i]);y[i]=kind?Math.max(-1.7,Math.min(1.7,t>0?t-1.8:t+1.8)):(q?1.3:-1.3);});
+  const A=s.map(feat),n=A[0].length,G=[],b=[];
+  for(let p=0;p<n;p++){G.push([]);for(let q=0;q<n;q++){let v=0;for(let i=0;i<NP;i++)v+=A[i][p]*A[i][q];G[p].push(v);}
+    let v=0;for(let i=0;i<NP;i++)v+=A[i][p]*y[i];b.push(v);}
+  const tc=kind===2?TD:kind?Array.from({length:NC},(_,j)=>TC[j]||0):null;
+  return {s,A,y,m:NP,n,G,b,out,feat,truth,tc,under:n>NP};}
+function inv(M){const n=M.length,W=M.map((r,i)=>r.concat(r.map((_,j)=>i===j?1:0)));
+  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(W[r][c])>Math.abs(W[p][c]))p=r;[W[c],W[p]]=[W[p],W[c]];
+    const d=W[c][c];for(let k=0;k<2*n;k++)W[c][k]/=d;
+    for(let r=0;r<n;r++){if(r===c)continue;const g=W[r][c];if(g)for(let k=0;k<2*n;k++)W[r][k]-=g*W[c][k];}}
+  return W.map(r=>r.slice(n));}
+// lam = 0: plain least squares by Householder QR (the normal equations are too ill-conditioned)
+function lstsq(P){const m=P.m,n=P.n,Q=P.A.map(r=>r.slice()),y=P.y.slice();
+  for(let k=0;k<n;k++){let nr=0;for(let i=k;i<m;i++)nr+=Q[i][k]**2;nr=Math.sqrt(nr);if(nr===0)continue;
+    const al=Q[k][k]>0?-nr:nr,v=[];for(let i=k;i<m;i++)v.push(Q[i][k]);v[0]-=al;let vv=0;for(const t of v)vv+=t*t;if(vv===0)continue;
+    for(let j=k;j<n;j++){let d=0;for(let i=k;i<m;i++)d+=v[i-k]*Q[i][j];d*=2/vv;for(let i=k;i<m;i++)Q[i][j]-=d*v[i-k];}
+    let d=0;for(let i=k;i<m;i++)d+=v[i-k]*y[i];d*=2/vv;for(let i=k;i<m;i++)y[i]-=d*v[i-k];}
+  const x=new Array(n).fill(0);for(let k=n-1;k>=0;k--){let t=y[k];for(let j=k+1;j<n;j++)t-=Q[k][j]*x[j];x[k]=t/Q[k][k];}
+  return x;}
+// more unknowns than points: the lam -> 0 limit of ridge is the minimum-norm interpolant A^T (A A^T)^-1 y
+function minnorm(P){const m=P.m,K=[];for(let i=0;i<m;i++){K.push([]);for(let k=0;k<m;k++){let v=0;for(let j=0;j<P.n;j++)v+=P.A[i][j]*P.A[k][j];K[i].push(v);}}
+  const a=inv(K).map(r=>r.reduce((t,v,k)=>t+v*P.y[k],0)),x=[];for(let j=0;j<P.n;j++){let v=0;for(let i=0;i<m;i++)v+=P.A[i][j]*a[i];x.push(v);}return x;}
+function ridge(P,lam){if(lam===0)return P.under?minnorm(P):lstsq(P);
+  const I=inv(P.G.map((r,i)=>r.map((v,j)=>v+(i===j?lam:0))));return I.map(r=>r.reduce((t,v,j)=>t+v*P.b[j],0));}
+// Lasso by ADMM (x = z splitting, rho = lam/10); z carries the exact zeros
+function lasso(P,lam){if(lam===0)return P.under?lasso(P,1e-5):lstsq(P);
+  const n=P.n,rho=lam/10,I=inv(P.G.map((r,i)=>r.map((v,j)=>2*v+(i===j?rho:0))));
+  const z=new Array(n).fill(0),u=new Array(n).fill(0),q=new Array(n),x=new Array(n);
+  for(let it=0,N=P.under?30000:60000;it<N;it++){for(let j=0;j<n;j++)q[j]=2*P.b[j]+rho*(z[j]-u[j]);
+    for(let i=0;i<n;i++){let t=0;const r=I[i];for(let j=0;j<n;j++)t+=r[j]*q[j];x[i]=t;}
+    for(let j=0;j<n;j++){const w=x[j]+u[j];z[j]=Math.sign(w)*Math.max(Math.abs(w)-lam/rho,0);u[j]+=x[j]-z[j];}}
+  return z;}
+function evalc(P,c,s){const f=P.feat(s);let t=0;for(let j=0;j<c.length;j++)t+=f[j]*c[j];return t;}
+function dataErr(P,c){let e=0;for(let i=0;i<P.m;i++)e+=(evalc(P,c,P.s[i])-P.y[i])**2;return e;}
+function trueErr(P,c){let e=0;const N=200;for(let i=0;i<=N;i++){const s=i/N;e+=(evalc(P,c,s)-P.truth(s))**2;}return Math.sqrt(e/(N+1));}
+/*END*/
+
+(() => {
+  const $=id=>document.getElementById(id);
+  const COL=['#1f5fbf','#2a9d5c'], INK='#1d1f24', MUTED='#6b6f78', GRID='#ececE6', ORANGE='#e8801a';
+  let mode=2, P, C;
+  const sup=n=>String(n).replace(/[-0-9]/g,c=>'⁻⁰¹²³⁴⁵⁶⁷⁸⁹'['-0123456789'.indexOf(c)]);
+  const num=v=>{v=Math.abs(v)<5e-4?0:v;return Math.abs(v)<1000?v.toFixed(2):v.toExponential(1).replace(/e\+?(-?\d+)/,(m,d)=>' × 10'+sup(d));};
+  const lamv=()=>+$('lam').value<-5.01?0:Math.pow(10,+$('lam').value);
+  const shown=()=>mode===2?[0,1]:[mode];
+
+  function ctx(cv){const rc=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+    cv.width=Math.round(rc.width*d);cv.height=Math.round(rc.height*d);
+    const g=cv.getContext('2d');g.setTransform(d,0,0,d,0,0);return {g,w:rc.width,h:rc.height};}
+  function solve(){const k=+$('feat').value;$('pre').disabled=!!k;P=makeData(k,+$('pre').value,+$('out').value);const l=lamv();C=[ridge(P,l),lasso(P,l)];}
+
+  // ---- the fit
+  function fit(){const {g,w,h}=ctx($('cv1')),L=52,R=18,Tp=10,B=30,V=1.9;
+    const px=s=>L+s*(w-L-R), py=v=>Tp+(V-v)/(2*V)*(h-Tp-B);
+    g.clearRect(0,0,w,h);g.font='14px "Segoe UI",Roboto,Arial,sans-serif';g.lineWidth=1;
+    g.textAlign='right';g.textBaseline='middle';
+    for(let v=-1;v<=1;v++){const y=py(v);g.strokeStyle=v?GRID:'#c9c9c2';g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();g.fillStyle=MUTED;g.fillText(v,L-8,y);}
+    g.textAlign='center';g.textBaseline='top';
+    for(const s of [0,.25,.5,.75,1]){const x=px(s);g.strokeStyle=GRID;g.beginPath();g.moveTo(x,Tp);g.lineTo(x,h-B);g.stroke();g.fillStyle=MUTED;g.fillText(s,x,h-B+7);}
+    g.strokeStyle=INK;g.beginPath();g.moveTo(L,Tp);g.lineTo(L,h-B);g.lineTo(w-R,h-B);g.stroke();
+    g.save();g.beginPath();g.rect(L,Tp,w-L-R,h-Tp-B);g.clip();
+    const curve=(f,col,lw,dash)=>{g.strokeStyle=col;g.lineWidth=lw;g.setLineDash(dash);g.beginPath();
+      for(let i=0;i<=600;i++){const s=i/600,x=px(s),y=py(Math.max(-9,Math.min(9,f(s))));i?g.lineTo(x,y):g.moveTo(x,y);}g.stroke();g.setLineDash([]);};
+    curve(P.truth,'#555',2,[7,6]);
+    for(const m of shown())curve(s=>evalc(P,C[m],s),COL[m],3,[]);
+    for(let i=0;i<P.m;i++){const o=P.out.includes(i);g.fillStyle=ORANGE;g.strokeStyle=o?INK:'#fff';g.lineWidth=o?2.5:1.5;g.beginPath();g.arc(px(P.s[i]),py(P.y[i]),o?7:5.5,0,7);g.fill();g.stroke();}
+    g.restore();
+    g.textAlign='left';g.textBaseline='bottom';g.fillStyle=MUTED;g.fillText('data    - - true curve',L+26,h-B-6);
+    g.fillStyle=ORANGE;g.beginPath();g.arc(L+15,h-B-15,5,0,7);g.fill();
+  }
+
+  // ---- the coefficients
+  // polynomial: symmetric log axis; cosines: linear axis with the true coefficients as ticks.
+  // Bars beyond the axis are cut and marked.
+  const SL=v=>Math.sign(v)*Math.log10(1+Math.abs(v));
+  function bars(){const {g,w,h}=ctx($('cv2')),L=52,R=18,Tp=24,B=42,n=P.n,S=shown(),lin=!!P.tc,lim=lin?1:1000;
+    const T=lin?(v=>v):SL,VT=T(lim),py=v=>Tp+(VT-Math.max(-VT,Math.min(VT,T(v))))/(2*VT)*(h-Tp-B), gw=(w-L-R)/n;
+    g.clearRect(0,0,w,h);g.font='14px "Segoe UI",Roboto,Arial,sans-serif';g.lineWidth=1;g.textAlign='right';g.textBaseline='middle';
+    for(const v of lin?[-1,-.5,0,.5,1]:[-1000,-100,-10,-1,0,1,10,100,1000]){const y=py(v);g.strokeStyle=v?GRID:INK;g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
+      if(lin||Math.abs(v)!==1){g.fillStyle=MUTED;g.fillText(v,L-8,y);}}
+    g.textAlign='center';if(lin)g.font='13px "Segoe UI",Roboto,Arial,sans-serif';
+    for(let j=0;j<n;j++){const cx=L+(j+.5)*gw,tw=Math.min(60,gw*.66),bw=tw/S.length,y0=py(0);
+      S.forEach((m,q)=>{const v=C[m][j],y1=py(v),x0=cx-tw/2+q*bw+(lin?0:1);g.fillStyle=COL[m];
+        g.fillRect(x0,Math.min(y0,y1),bw-(lin?0.5:2),v===0?0:Math.max(1.5,Math.abs(y1-y0)));
+        if(Math.abs(v)>lim){const up=v>0,yy=up?Tp:h-B,d=up?-1:1;g.beginPath();g.moveTo(x0-2,yy);g.lineTo(x0+bw,yy);g.lineTo(x0+bw/2-1,yy+d*9);g.closePath();g.fill();}});
+      if(lin){const yt=py(P.tc[j]);g.strokeStyle=INK;g.lineWidth=3;g.beginPath();g.moveTo(cx-tw/2-3,yt);g.lineTo(cx+tw/2+3,yt);g.stroke();}
+      g.fillStyle=MUTED;g.textBaseline='top';g.fillText(lin?j:j===0?'1':j===1?'s':'s'+sup(j),cx,h-B+16);}
+    if(lin){g.font='14px "Segoe UI",Roboto,Arial,sans-serif';g.textAlign='right';g.textBaseline='top';g.fillStyle=MUTED;g.fillText('▬ true coefficients     j: feature cos(jπs)',w-R-4,2);}
+  }
+
+  function readout(){const l=lamv();$('lo').textContent=l===0?'0':l<0.01?l.toExponential(1).replace(/e(-?\d+)/,(m,d)=>' × 10'+sup(d)):l<10?l.toFixed(2):l.toFixed(1);
+    [0,1].forEach(m=>{const on=shown().includes(m);
+      $('z'+m).textContent=on?C[m].filter(v=>v===0).length+' of '+P.n:'';
+      $('m'+m).textContent=on?num(Math.max(...C[m].map(Math.abs))):'';
+      $('e'+m).textContent=on?num(dataErr(P,C[m])):'';
+      $('t'+m).textContent=on?num(trueErr(P,C[m])):'';});}
+  const draw=()=>{fit();bars();readout();};
+
+  document.querySelectorAll('button[data-m]').forEach(b=>b.addEventListener('click',()=>{mode=+b.dataset.m;
+    document.querySelectorAll('button[data-m]').forEach(c=>c.classList.toggle('on',c===b));draw();}));
+  $('lam').addEventListener('input',()=>{solve();draw();});
+  $('pre').addEventListener('change',()=>{solve();draw();});
+  $('feat').addEventListener('change',()=>{solve();draw();});
+  $('out').addEventListener('change',()=>{solve();draw();});
+  window.addEventListener('resize',draw);
+  solve();draw();
+})();
+</script>
+</body>
+</html>
