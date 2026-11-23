@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proximal gradient descent</title>
+<style>
+  :root { --bg:#fbfbf9; --ink:#1d1f24; --muted:#6b6f78; --line:#dcdcd6; --blue:#1f5fbf; --purple:#8a4fc9; --orange:#e8801a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  header { padding:14px 22px 6px; }
+  h1 { margin:0; font-size:22px; font-weight:600; }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; padding:10px 22px 22px; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+  .stage { background:#fff; border:1px solid var(--line); border-radius:6px; min-height:520px; height:calc(100vh - 86px); position:relative; }
+  .stage canvas { position:absolute; inset:0; width:100%; height:100%; touch-action:none; cursor:default; }
+  .view { position:absolute; left:12px; top:12px; }
+  .side { display:flex; flex-direction:column; gap:12px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:6px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:13px; font-weight:600; color:var(--muted); }
+  .row { display:flex; gap:6px; flex-wrap:wrap; }
+  button { font:inherit; font-size:15px; padding:6px 10px; border:1px solid var(--line); border-radius:5px; background:#fff; color:var(--ink); cursor:pointer; }
+  button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+  label.sl { display:grid; grid-template-columns:86px 1fr 56px; align-items:center; gap:8px; margin:6px 0; }
+  output { font-variant-numeric:tabular-nums; text-align:right; }
+  input[type=range] { width:100%; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  td { padding:3px 0; }
+  td:last-child { text-align:right; }
+  .chart { position:relative; height:130px; }
+  .chart canvas { position:absolute; inset:0; width:100%; height:100%; }
+</style>
+</head>
+<body>
+<header><h1>Proximal gradient descent</h1></header>
+<main>
+  <div class="stage"><canvas id="cv"></canvas><div class="row view"><button id="vCont" class="on">Contours</button><button id="vSurf">Surface</button></div></div>
+  <div class="side">
+    <div class="card">
+      <h2>Method</h2>
+      <div class="row">
+        <button id="mProx" class="on">Proximal gradient</button>
+        <button id="mSub">Subgradient</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Parameters</h2>
+      <label class="sl"><span>&lambda;</span><input id="lam" type="range" min="0" max="3" step="0.05" value="1"><output id="lamO"></output></label>
+      <label class="sl"><span>Step size t</span><input id="tt" type="range" min="0.02" max="0.8" step="0.005" value="0.375"><output id="ttO"></output></label>
+    </div>
+    <div class="card">
+      <h2>Iteration</h2>
+      <div class="row">
+        <button id="bStep">Next step</button>
+        <button id="bRun">Run 20 iterations</button>
+        <button id="bReset">Reset</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Readout</h2>
+      <table>
+        <tr><td>iteration k</td><td id="rK"></td></tr>
+        <tr><td>current x</td><td id="rX"></td></tr>
+        <tr><td>objective g(x) + h(x)</td><td id="rF"></td></tr>
+        <tr><td>coordinates exactly zero</td><td id="rZ"></td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Objective per iteration</h2>
+      <div class="chart"><canvas id="ch"></canvas></div>
+    </div>
+  </div>
+</main>
+<script>
+"use strict";
+// ---------- problem: min ||y - A x||^2 + lam * ||x||_1 in two variables ----------
+const A = [[1.0, 0.4], [0.1, 0.7]];
+const y = [A[0][0] * 1.6 + A[0][1] * 0.25, A[1][0] * 1.6 + A[1][1] * 0.25];
+const X0 = [-0.6, 1.7];
+const VIEW = { x0: -1.0, x1: 2.1, y0: -0.75, y1: 2.0 };
+
+let lam = 1, t = 0.375, mode = "prox", view = "cont";
+let yaw = -0.55, pitch = 0.82;
+let start = X0.slice();
+let xs, vs, phase;            // iterates, gradient-step points, phase 1 = gradient step shown, prox pending
+
+function resid(x) { return [y[0] - A[0][0] * x[0] - A[0][1] * x[1], y[1] - A[1][0] * x[0] - A[1][1] * x[1]]; }
+function gSmooth(x) { const r = resid(x); return r[0] * r[0] + r[1] * r[1]; }
+function grad(x) { const r = resid(x); return [-2 * (A[0][0] * r[0] + A[1][0] * r[1]), -2 * (A[0][1] * r[0] + A[1][1] * r[1])]; }
+function obj(x) { return gSmooth(x) + lam * (Math.abs(x[0]) + Math.abs(x[1])); }
+function soft(v, k) { return v > k ? v - k : (v < -k ? v + k : 0); }
+function lipschitz() {
+  const a = A[0][0] * A[0][0] + A[1][0] * A[1][0], d = A[0][1] * A[0][1] + A[1][1] * A[1][1], b = A[0][0] * A[0][1] + A[1][0] * A[1][1];
+  return 2 * ((a + d) / 2 + Math.sqrt((a - d) * (a - d) / 4 + b * b));
+}
+function minimizer() {
+  let x = [0, 0]; const s = 1 / lipschitz();
+  for (let i = 0; i < 4000; i++) { const g = grad(x); x = [soft(x[0] - s * g[0], lam * s), soft(x[1] - s * g[1], lam * s)]; }
+  return x;
+}
+function reset() { xs = [start.slice()]; vs = []; phase = 0; }
+function halfStep() {
+  const x = xs[xs.length - 1];
+  if (!isFinite(x[0]) || !isFinite(x[1]) || Math.abs(x[0]) > 1e6 || Math.abs(x[1]) > 1e6) return;
+  if (mode === "prox") {
+    if (phase === 0) { const g = grad(x); vs.push([x[0] - t * g[0], x[1] - t * g[1]]); phase = 1; }
+    else { const v = vs[vs.length - 1]; xs.push([soft(v[0], lam * t), soft(v[1], lam * t)]); phase = 0; }
+  } else {
+    const g = grad(x);
+    const sg = [g[0] + lam * Math.sign(x[0]), g[1] + lam * Math.sign(x[1])];
+    xs.push([x[0] - t * sg[0], x[1] - t * sg[1]]); phase = 0;
+  }
+}
+function fullStep() { halfStep(); if (phase === 1) halfStep(); }
+
+// ---------- drawing ----------
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+const ch = document.getElementById("ch"), ctc = ch.getContext("2d");
+let W = 0, H = 0, sc = 1, ox = 0, oy = 0;
+function fit(c) {
+  const r = c.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+  c.width = Math.max(1, Math.round(r.width * d)); c.height = Math.max(1, Math.round(r.height * d));
+  c.getContext("2d").setTransform(d, 0, 0, d, 0, 0);
+  return [r.width, r.height];
+}
+function layout() {
+  [W, H] = fit(cv);
+  const pad = 14, w = VIEW.x1 - VIEW.x0, h = VIEW.y1 - VIEW.y0;
+  sc = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
+  ox = (W - sc * w) / 2; oy = (H - sc * h) / 2;
+}
+function px(p) { return [ox + (p[0] - VIEW.x0) * sc, oy + (VIEW.y1 - p[1]) * sc]; }
+function unpx(q) { return [VIEW.x0 + (q[0] - ox) / sc, VIEW.y1 - (q[1] - oy) / sc]; }
+function clampView(p) { return [Math.min(VIEW.x1, Math.max(VIEW.x0, p[0])), Math.min(VIEW.y1, Math.max(VIEW.y0, p[1]))]; }
+
+function contours() {
+  const nx = 150, ny = 132, F = new Float64Array((nx + 1) * (ny + 1));
+  let lo = Infinity, hi = -Infinity;
+  const dx = (VIEW.x1 - VIEW.x0) / nx, dy = (VIEW.y1 - VIEW.y0) / ny;
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+    const v = obj([VIEW.x0 + i * dx, VIEW.y0 + j * dy]); F[j * (nx + 1) + i] = v; if (v < lo) lo = v; if (v > hi) hi = v;
+  }
+  ctx.strokeStyle = "#c9c9c4"; ctx.lineWidth = 1;
+  const nl = 16;
+  for (let l = 1; l <= nl; l++) {
+    const lev = lo + (hi - lo) * Math.pow(l / (nl + 1), 2);
+    ctx.beginPath();
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const a = F[j * (nx + 1) + i], b = F[j * (nx + 1) + i + 1], c = F[(j + 1) * (nx + 1) + i + 1], d = F[(j + 1) * (nx + 1) + i];
+      const pts = [];
+      const X = VIEW.x0 + i * dx, Y = VIEW.y0 + j * dy;
+      if ((a < lev) !== (b < lev)) pts.push([X + dx * (lev - a) / (b - a), Y]);
+      if ((b < lev) !== (c < lev)) pts.push([X + dx, Y + dy * (lev - b) / (c - b)]);
+      if ((d < lev) !== (c < lev)) pts.push([X + dx * (lev - d) / (c - d), Y + dy]);
+      if ((a < lev) !== (d < lev)) pts.push([X, Y + dy * (lev - a) / (d - a)]);
+      for (let k = 0; k + 1 < pts.length; k += 2) { const p = px(pts[k]), q = px(pts[k + 1]); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); }
+    }
+    ctx.stroke();
+  }
+}
+function arrow(a, b, col) {
+  const p = px(a), q = px(b), ang = Math.atan2(q[1] - p[1], q[0] - p[0]), len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+  if (len > 6) {
+    const s = Math.min(12, len);
+    ctx.beginPath(); ctx.moveTo(q[0], q[1]);
+    ctx.lineTo(q[0] - s * Math.cos(ang - 0.4), q[1] - s * Math.sin(ang - 0.4));
+    ctx.lineTo(q[0] - s * Math.cos(ang + 0.4), q[1] - s * Math.sin(ang + 0.4)); ctx.closePath(); ctx.fill();
+  }
+}
+function dot(p, r, fill, stroke) {
+  const q = px(p); ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, 2 * Math.PI);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2.5; ctx.stroke(); }
+}
+function draw() {
+  layout();
+  ctx.clearRect(0, 0, W, H);
+  if (view === "surf") { draw3D(); legend(W - 16, 26); readout(); chart(); return; }
+  ctx.save();
+  const tl = px([VIEW.x0, VIEW.y1]), br = px([VIEW.x1, VIEW.y0]);
+  ctx.beginPath(); ctx.rect(tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]); ctx.clip();
+  contours();
+  // axes
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 1.3;
+  let a = px([VIEW.x0, 0]), b = px([VIEW.x1, 0]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  a = px([0, VIEW.y0]); b = px([0, VIEW.y1]); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  // minimizer
+  const m = px(minimizer());
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(m[0] - 7, m[1] - 7); ctx.lineTo(m[0] + 7, m[1] + 7); ctx.moveTo(m[0] - 7, m[1] + 7); ctx.lineTo(m[0] + 7, m[1] - 7); ctx.stroke();
+  // trail
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 1.6; ctx.beginPath();
+  xs.forEach((p, i) => { const q = px(p); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.stroke();
+  xs.forEach(p => dot(p, 3.5, "#1d1f24"));
+  // last step
+  const n = xs.length;
+  if (mode === "prox") {
+    if (phase === 1) { arrow(xs[n - 1], vs[vs.length - 1], "#1f5fbf"); dot(vs[vs.length - 1], 6, "#fff", "#1f5fbf"); }
+    else if (n > 1) { arrow(xs[n - 2], vs[vs.length - 1], "#1f5fbf"); dot(vs[vs.length - 1], 6, "#fff", "#1f5fbf"); arrow(vs[vs.length - 1], xs[n - 1], "#8a4fc9"); }
+  } else if (n > 1) { arrow(xs[n - 2], xs[n - 1], "#1f5fbf"); }
+  dot(xs[n - 1], 7, "#e8801a");
+  ctx.restore();
+  ctx.strokeStyle = "#dcdcd6"; ctx.lineWidth = 1; ctx.strokeRect(tl[0], tl[1], br[0] - tl[0], br[1] - tl[1]);
+  // axis names and legend line
+  ctx.fillStyle = "#6b6f78"; ctx.font = "15px Segoe UI, Roboto, Helvetica Neue, Arial"; ctx.textBaseline = "alphabetic";
+  let q = px([VIEW.x1, 0]); ctx.textAlign = "right"; ctx.fillText("x₁", q[0] - 8, q[1] - 8);
+  q = px([0, VIEW.y1]); ctx.textAlign = "left"; ctx.fillText("x₂", q[0] + 8, q[1] + 20);
+  legend(br[0] - 10, tl[1] + 22);
+  readout(); chart();
+}
+function legend(lx, ly) {
+  ctx.font = "15px Segoe UI, Roboto, Helvetica Neue, Arial"; ctx.textBaseline = "alphabetic"; ctx.textAlign = "right";
+  if (mode === "prox") {
+    const s2 = "prox step on h", s1 = "gradient step on g   ";
+    ctx.fillStyle = "#8a4fc9"; ctx.fillText(s2, lx, ly);
+    ctx.fillStyle = "#1f5fbf"; ctx.fillText(s1, lx - ctx.measureText(s2).width, ly);
+  } else { ctx.fillStyle = "#1f5fbf"; ctx.fillText("subgradient step on g + h", lx, ly); }
+}
+
+// ---------- surface view: height = g(x) + h(x) ----------
+const GX = 31, GY = 22;                       // grid cells; x = 0 and y = 0 are grid lines, so the creases are sharp
+let zLo = 0, zHi = 1, s3 = 1;
+function zOf(f) { return 2.1 * (Math.min(f, zHi) - zLo) / (zHi - zLo); }
+function p3(x, y, z) {
+  const cx = (VIEW.x0 + VIEW.x1) / 2, cy = (VIEW.y0 + VIEW.y1) / 2, cz = 0.75;
+  const X = x - cx, Y = y - cy, Z = z - cz;
+  const xr = X * Math.cos(yaw) - Y * Math.sin(yaw), yr = X * Math.sin(yaw) + Y * Math.cos(yaw);
+  return [W / 2 + s3 * xr, H / 2 - s3 * (Z * Math.cos(pitch) + yr * Math.sin(pitch)), yr * Math.cos(pitch) - Z * Math.sin(pitch)];
+}
+function on(p) { return p3(p[0], p[1], zOf(obj(p)) + 0.015); }
+function seg3(a, b, col, lw, dash) {
+  ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.setLineDash([]);
+}
+function arrow3(a, b, col) {
+  const ang = Math.atan2(b[1] - a[1], b[0] - a[0]), len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  seg3(a, b, col, 3);
+  if (len > 6) {
+    const s = Math.min(12, len); ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(b[0], b[1]);
+    ctx.lineTo(b[0] - s * Math.cos(ang - 0.4), b[1] - s * Math.sin(ang - 0.4));
+    ctx.lineTo(b[0] - s * Math.cos(ang + 0.4), b[1] - s * Math.sin(ang + 0.4)); ctx.closePath(); ctx.fill();
+  }
+}
+function dot3(q, r, fill, stroke) {
+  ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, 2 * Math.PI);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 2.5; ctx.stroke(); }
+}
+function draw3D() {
+  s3 = Math.min(W, H) / 4.3;
+  const dx = (VIEW.x1 - VIEW.x0) / GX, dy = (VIEW.y1 - VIEW.y0) / GY, F = [];
+  zLo = Infinity; let fMax = -Infinity;
+  for (let j = 0; j <= GY; j++) { F.push([]); for (let i = 0; i <= GX; i++) {
+    const v = obj([VIEW.x0 + i * dx, VIEW.y0 + j * dy]); F[j].push(v); if (v < zLo) zLo = v; if (v > fMax) fMax = v; } }
+  zLo = Math.min(zLo, obj(minimizer())); zHi = fMax;
+  // floor frame and axes
+  const c = [[VIEW.x0, VIEW.y0], [VIEW.x1, VIEW.y0], [VIEW.x1, VIEW.y1], [VIEW.x0, VIEW.y1]].map(q => p3(q[0], q[1], -0.25));
+  for (let k = 0; k < 4; k++) seg3(c[k], c[(k + 1) % 4], "#dcdcd6", 1);
+  seg3(p3(VIEW.x0, 0, -0.25), p3(VIEW.x1, 0, -0.25), "#6b6f78", 1, [5, 4]);
+  seg3(p3(0, VIEW.y0, -0.25), p3(0, VIEW.y1, -0.25), "#6b6f78", 1, [5, 4]);
+  // shadow of the path on the floor
+  ctx.strokeStyle = "#9a9da3"; ctx.lineWidth = 1.4; ctx.beginPath();
+  xs.forEach((p, i) => { const q = p3(p[0], p[1], -0.25); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.stroke();
+  // surface, far quads first
+  const quads = [];
+  for (let j = 0; j < GY; j++) for (let i = 0; i < GX; i++) {
+    const P = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(q => p3(VIEW.x0 + q[0] * dx, VIEW.y0 + q[1] * dy, zOf(F[q[1]][q[0]])));
+    const fm = (F[j][i] + F[j][i + 1] + F[j + 1][i + 1] + F[j + 1][i]) / 4;
+    quads.push({ P: P, d: (P[0][2] + P[1][2] + P[2][2] + P[3][2]) / 4, u: Math.min(1, (fm - zLo) / (zHi - zLo)) });
+  }
+  quads.sort((a, b) => b.d - a.d);
+  ctx.lineWidth = 0.6; ctx.strokeStyle = "rgba(120,128,140,.55)";
+  for (const q of quads) {
+    const u = q.u, r = Math.round(246 - 70 * u), g = Math.round(248 - 52 * u), b = Math.round(252 - 26 * u);
+    ctx.fillStyle = "rgba(" + r + "," + g + "," + b + ",.93)";
+    ctx.beginPath(); ctx.moveTo(q.P[0][0], q.P[0][1]); for (let k = 1; k < 4; k++) ctx.lineTo(q.P[k][0], q.P[k][1]); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  // creases along x1 = 0 and x2 = 0, drawn on the surface
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 1.5;
+  ctx.beginPath(); for (let i = 0; i <= GX; i++) { const q = on([VIEW.x0 + i * dx, 0]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); } ctx.stroke();
+  ctx.beginPath(); for (let j = 0; j <= GY; j++) { const q = on([0, VIEW.y0 + j * dy]); if (j) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); } ctx.stroke();
+  ctx.fillStyle = "#6b6f78"; ctx.font = "15px Segoe UI, Roboto, Helvetica Neue, Arial"; ctx.textAlign = "center";
+  let q = on([VIEW.x1, 0]); ctx.fillText("x\u2081", q[0] + 14, q[1] + 4);
+  q = on([0, VIEW.y1]); ctx.fillText("x\u2082", q[0], q[1] - 10);
+  // minimizer, path and last step, on the surface
+  const m = on(minimizer());
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(m[0] - 7, m[1] - 7); ctx.lineTo(m[0] + 7, m[1] + 7); ctx.moveTo(m[0] - 7, m[1] + 7); ctx.lineTo(m[0] + 7, m[1] - 7); ctx.stroke();
+  const inView = p => p[0] >= VIEW.x0 - 1 && p[0] <= VIEW.x1 + 1 && p[1] >= VIEW.y0 - 1 && p[1] <= VIEW.y1 + 1;
+  const T = xs.filter(inView).map(on);
+  ctx.strokeStyle = "#1d1f24"; ctx.lineWidth = 1.8; ctx.beginPath();
+  T.forEach((p, i) => { if (i) ctx.lineTo(p[0], p[1]); else ctx.moveTo(p[0], p[1]); }); ctx.stroke();
+  T.forEach(p => dot3(p, 3.5, "#1d1f24"));
+  const n = xs.length, last = vs.length ? vs[vs.length - 1] : null;
+  if (mode === "prox") {
+    if (phase === 1 && inView(last)) { arrow3(on(xs[n - 1]), on(last), "#1f5fbf"); dot3(on(last), 6, "#fff", "#1f5fbf"); }
+    else if (phase === 0 && n > 1 && inView(last)) { arrow3(on(xs[n - 2]), on(last), "#1f5fbf"); dot3(on(last), 6, "#fff", "#1f5fbf"); arrow3(on(last), on(xs[n - 1]), "#8a4fc9"); }
+  } else if (n > 1 && inView(xs[n - 1]) && inView(xs[n - 2])) { arrow3(on(xs[n - 2]), on(xs[n - 1]), "#1f5fbf"); }
+  if (inView(xs[n - 1])) dot3(on(xs[n - 1]), 7, "#e8801a", "#fff");
+}
+function fmt(v) { return isFinite(v) ? (Math.abs(v) >= 1e4 ? v.toExponential(2) : v.toFixed(3)) : "∞"; }
+function readout() {
+  const x = xs[xs.length - 1];
+  document.getElementById("rK").textContent = xs.length - 1;
+  document.getElementById("rX").textContent = "(" + fmt(x[0]) + ", " + fmt(x[1]) + ")";
+  document.getElementById("rF").textContent = fmt(obj(x));
+  document.getElementById("rZ").textContent = ((x[0] === 0) + (x[1] === 0)) + " of 2";
+  document.getElementById("lamO").value = lam.toFixed(2);
+  document.getElementById("ttO").value = t.toFixed(3);
+}
+function chart() {
+  const [w, h] = fit(ch); ctc.clearRect(0, 0, w, h);
+  const vals = xs.map(obj).map(v => isFinite(v) ? v : NaN), fs = obj(minimizer());
+  const n = Math.max(20, vals.length - 1);
+  let hi = Math.max.apply(null, vals.filter(v => !isNaN(v)).concat([fs + 1e-9]));
+  hi = Math.min(hi, Math.max(vals[0] * 3, fs + 1));
+  const l = 8, r = w - 8, tp = 8, bt = h - 8;
+  const X = i => l + (r - l) * i / n, Y = v => bt - (bt - tp) * (Math.min(v, hi) - fs) / (hi - fs || 1);
+  ctc.strokeStyle = "#dcdcd6"; ctc.lineWidth = 1; ctc.setLineDash([4, 4]);
+  ctc.beginPath(); ctc.moveTo(l, Y(fs)); ctc.lineTo(r, Y(fs)); ctc.stroke(); ctc.setLineDash([]);
+  ctc.strokeStyle = "#1d1f24"; ctc.lineWidth = 1.8; ctc.beginPath();
+  vals.forEach((v, i) => { if (isNaN(v)) return; if (i) ctc.lineTo(X(i), Y(v)); else ctc.moveTo(X(i), Y(v)); }); ctc.stroke();
+  const k = vals.length - 1; if (!isNaN(vals[k])) { ctc.fillStyle = "#e8801a"; ctc.beginPath(); ctc.arc(X(k), Y(vals[k]), 4, 0, 2 * Math.PI); ctc.fill(); }
+}
+
+// ---------- controls ----------
+function setMode(m) {
+  mode = m; document.getElementById("mProx").classList.toggle("on", m === "prox"); document.getElementById("mSub").classList.toggle("on", m === "sub");
+  reset(); draw();
+}
+function setView(v) {
+  view = v; document.getElementById("vCont").classList.toggle("on", v === "cont"); document.getElementById("vSurf").classList.toggle("on", v === "surf");
+  cv.style.cursor = v === "surf" ? "grab" : "default"; draw();
+}
+document.getElementById("vCont").onclick = () => setView("cont");
+document.getElementById("vSurf").onclick = () => setView("surf");
+document.getElementById("mProx").onclick = () => setMode("prox");
+document.getElementById("mSub").onclick = () => setMode("sub");
+document.getElementById("lam").oninput = e => { lam = +e.target.value; reset(); draw(); };
+document.getElementById("tt").oninput = e => { t = +e.target.value; reset(); draw(); };
+document.getElementById("bStep").onclick = () => { halfStep(); draw(); };
+document.getElementById("bRun").onclick = () => { if (phase === 1) halfStep(); for (let i = 0; i < 20; i++) fullStep(); draw(); };
+document.getElementById("bReset").onclick = () => { reset(); draw(); };
+
+// drag the starting point
+let dragging = false, rot = null;
+function pos(e) { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+cv.addEventListener("pointerdown", e => {
+  if (view === "surf") { rot = pos(e); cv.setPointerCapture(e.pointerId); return; }
+  const p = pos(e), s = px(xs[0]);
+  if (Math.hypot(p[0] - s[0], p[1] - s[1]) < 22 || xs.length === 1) { dragging = true; cv.setPointerCapture(e.pointerId); start = clampView(unpx(p)); reset(); draw(); }
+});
+cv.addEventListener("pointermove", e => {
+  const p = pos(e);
+  if (view === "surf") {
+    if (rot) { yaw += (p[0] - rot[0]) * 0.008; pitch = Math.min(1.5, Math.max(0.12, pitch + (p[1] - rot[1]) * 0.008)); rot = p; draw(); }
+    return;
+  }
+  if (dragging) { start = clampView(unpx(p)); reset(); draw(); }
+  else { const s = px(xs[0]); cv.style.cursor = Math.hypot(p[0] - s[0], p[1] - s[1]) < 22 ? "grab" : "default"; }
+});
+cv.addEventListener("pointerup", () => { dragging = false; rot = null; });
+cv.addEventListener("pointercancel", () => { dragging = false; rot = null; });
+window.addEventListener("resize", draw);
+reset(); draw();
+</script>
+</body>
+</html>
