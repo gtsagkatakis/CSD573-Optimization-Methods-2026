@@ -40,11 +40,11 @@ td:last-child{text-align:right;font-variant-numeric:tabular-nums}
 <aside>
   <div class="card"><h2>Constraint set C</h2>
     <div class="row" id="setBtns"><button data-v="0">None</button><button data-v="2">&#8467;&#8322; ball</button><button data-v="1" class="on">&#8467;&#8321; ball</button></div>
-    <label id="tauLab">radius &tau;<input type="range" id="tau" min="0.3" max="4" step="0.1" value="1"><output id="tauO"></output></label>
+    <label id="tauLab">radius &tau;<input type="range" id="tau" min="0.3" max="4" step="0.1" value="2"><output id="tauO"></output></label>
   </div>
   <div class="card"><h2>Training set</h2>
-    <label style="margin-top:0">samples m<input type="range" id="ns" min="8" max="400" step="1" value="12"><output id="nsO"></output></label>
-    <label>mislabeled<input type="range" id="flip" min="0" max="4" step="1" value="0"><output id="flipO"></output></label>
+    <label style="margin-top:0">samples m<input type="range" id="ns" min="8" max="100" step="1" value="12"><output id="nsO"></output></label>
+    <label>mislabeled<input type="range" id="flip" min="0" max="2" step="1" value="0"><output id="flipO"></output></label>
   </div>
   <div class="card"><h2>Iterations</h2>
     <label style="margin-top:0">step size t &middot; L<input type="range" id="step" min="0.1" max="2.5" step="0.05" value="1"><output id="stepO"></output></label>
@@ -102,13 +102,13 @@ function sample(n,seed,nflip=0){let a=Math.imul(seed,2654435761)>>>0;const rnd=(
   const idx=POOLX.map((_,i)=>i);for(let i=idx.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[idx[i],idx[j]]=[idx[j],idx[i]]}
   const pick=idx.slice(0,n);if(!pick.some(i=>POOLY[i]===1))pick[0]=idx.find(i=>POOLY[i]===1);if(!pick.some(i=>POOLY[i]===0))pick[0]=idx.find(i=>POOLY[i]===0);
   XTR=pick.map(i=>POOLX[i]);YTR=pick.map(i=>POOLY[i]);M=n;LIP=lipschitz();
-  const r2=mulberry(Math.imul(3,40503)>>>0),ord=YTR.map((_,i)=>i);for(let i=ord.length-1;i>0;i--){const j=Math.floor(r2()*(i+1));[ord[i],ord[j]]=[ord[j],ord[i]]}
+  const r2=mulberry(Math.imul(6,40503)>>>0),ord=YTR.map((_,i)=>i);for(let i=ord.length-1;i>0;i--){const j=Math.floor(r2()*(i+1));[ord[i],ord[j]]=[ord[j],ord[i]]}
   FLIP=YTR.map(()=>false);for(let q=0;q<nflip;q++){YTR[ord[q]]=1-YTR[ord[q]];FLIP[ord[q]]=true}}
 
 // ---------- state ----------
-let path=[],opt=[0,0,0],fld=null,refKey='',dataKey='';
-function recompute(){const n=+$('ns').value,fl=$('flip');fl.max=Math.floor(n/3);const nf=Math.min(+fl.value,+fl.max),dk=n+'|'+nf;
-  if(dk!==dataKey){sample(n,17,nf);fld=surface();dataKey=dk;refKey=''}
+let path=[],opt=[0,0,0],optU=[0,0,0],fld=null,refKey='',dataKey='';
+function recompute(){const n=+$('ns').value,fl=$('flip');fl.max=Math.floor(n/6);const nf=Math.min(+fl.value,+fl.max),dk=n+'|'+nf;
+  if(dk!==dataKey){sample(n,32,nf);fld=surface();const keep=setC;setC=0;optU=reference(1);setC=keep;dataKey=dk;refKey=''}
   const tau=+$('tau').value,t=+$('step').value/LIP;
   const key=[setC,setC?tau:0].join('|');if(key!==refKey){opt=reference(tau);refKey=key}
   path=run(tau,t);draw()}
@@ -168,6 +168,7 @@ function drawPar(k){const{g,w,h}=setup($('cPar')),F=frame(g,w,h,VP,'θ₁','θ�
   g.strokeStyle='#8b8e96';g.lineWidth=1;g.beginPath();g.moveTo(F.X(0),F.oy);g.lineTo(F.X(0),F.oy+F.ph);g.moveTo(F.ox,F.Y(0));g.lineTo(F.ox+F.pw,F.Y(0));g.stroke();
   if(setC){g.beginPath();if(setC===2)g.arc(F.X(0),F.Y(0),tau*F.s,0,2*Math.PI);else{g.moveTo(F.X(tau),F.Y(0));g.lineTo(F.X(0),F.Y(tau));g.lineTo(F.X(-tau),F.Y(0));g.lineTo(F.X(0),F.Y(-tau));g.closePath()}
     g.fillStyle='rgba(59,125,216,.14)';g.fill();g.strokeStyle=INK;g.lineWidth=1.6;g.stroke()}
+  {const[x,y]=P(optU);g.strokeStyle=INK;g.lineWidth=2.2;g.beginPath();g.moveTo(x-6,y-6);g.lineTo(x+6,y+6);g.moveTo(x+6,y-6);g.lineTo(x-6,y+6);g.stroke()}
   // minimiser of the current problem
   {const[x,y]=P(opt);g.beginPath();for(let i=0;i<10;i++){const r=i%2?4.2:10,a=-Math.PI/2+i*Math.PI/5;g.lineTo(x+r*Math.cos(a),y+r*Math.sin(a))}g.closePath();g.fillStyle='#fff';g.fill();g.strokeStyle=INK;g.lineWidth=1.3;g.stroke()}
   for(let j=1;j<=k;j++){const a=P(path[j-1].th),u=P(path[j].u),b=P(path[j].th),cur=j===k;
@@ -180,7 +181,8 @@ function drawPar(k){const{g,w,h}=setup($('cPar')),F=frame(g,w,h,VP,'θ₁','θ�
   g.font='13px '+FONT;g.textBaseline='middle';g.textAlign='left';let x=F.ox,y=18;
   g.strokeStyle=BLUE;g.lineWidth=2.4;g.setLineDash([6,4]);g.beginPath();g.moveTo(x,y);g.lineTo(x+26,y);g.stroke();g.setLineDash([]);g.fillStyle=INK;g.fillText('gradient step',x+32,y);x+=32+g.measureText('gradient step').width+16;
   g.strokeStyle=ORANGE;g.beginPath();g.moveTo(x,y);g.lineTo(x+26,y);g.stroke();g.fillText('projection',x+32,y);x+=32+g.measureText('projection').width+16;
-  g.beginPath();for(let i=0;i<10;i++){const r=i%2?3:7,a=-Math.PI/2+i*Math.PI/5;g.lineTo(x+7+r*Math.cos(a),y+r*Math.sin(a))}g.closePath();g.fillStyle='#fff';g.fill();g.strokeStyle=INK;g.lineWidth=1.2;g.stroke();g.fillStyle=INK;g.fillText('minimizer',x+19,y)}
+  g.beginPath();for(let i=0;i<10;i++){const r=i%2?3:7,a=-Math.PI/2+i*Math.PI/5;g.lineTo(x+7+r*Math.cos(a),y+r*Math.sin(a))}g.closePath();g.fillStyle='#fff';g.fill();g.strokeStyle=INK;g.lineWidth=1.2;g.stroke();g.fillStyle=INK;g.fillText('minimizer',x+19,y);x+=19+g.measureText('minimizer').width+16;
+  g.strokeStyle=INK;g.lineWidth=2.2;g.beginPath();g.moveTo(x,y-5);g.lineTo(x+10,y+5);g.moveTo(x+10,y-5);g.lineTo(x,y+5);g.stroke();g.fillText('unconstrained',x+16,y)}
 function draw(){const k=+$('it').value,p=path[k];
   $('tauO').value=(+$('tau').value).toFixed(1);$('nsO').value=$('ns').value;$('flipO').value=$('flip').value;$('stepO').value=(+$('step').value).toFixed(2);$('itO').value=k;
   $('tauLab').className=setC?'':'off';$('tau').disabled=!setC;
